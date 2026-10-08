@@ -1,0 +1,16 @@
+# Secrets — never commit
+local.properties
+keystore.properties
+*.jks
+*.keystore
+
+# Build output
+build/
+app/build/
+.gradle/
+.kotlin/
+
+# IDE
+.idea/
+*.iml
+.DS_Store

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Framework theme so we don't pull in the whole Material Components library just for a window style.
+     Compose paints everything; this only sets the window background and removes the action bar. -->
+<resources>
+    <style name="Theme.LivePipe" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+</resources>

@@ -1,0 +1,49 @@
+name: release
+
+# Tag push -> build signed APK -> publish a GitHub Release with the APK attached.
+# The README's green "Download latest" button points at releases/latest, so it auto-refreshes
+# to this build. Every tag shows up on the Releases page with its own notes and download.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write        # needed to create the release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Stable signature from repo secrets if set; otherwise a throwaway CI key so the APK
+      # still installs. ponytail: throwaway key changes per release (users reinstall to update)
+      # — add the 4 secrets once to fix the signature permanently.
+      - name: Signing config
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > app/angra-release.jks
+          else
+            KEYSTORE_PASSWORD=$(openssl rand -hex 16); KEY_PASSWORD=$KEYSTORE_PASSWORD; KEY_ALIAS=angra
+            keytool -genkeypair -keystore app/angra-release.jks -alias angra -keyalg RSA -keysize 2048 \
+              -validity 10000 -storepass "$KEYSTORE_PASSWORD" -keypass "$KEY_PASSWORD" -dname "CN=Angra Streaming"
+          fi
+          printf 'storeFile=angra-release.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > keystore.properties
+
+      - run: chmod +x gradlew
+      - run: ./gradlew assembleRelease
+
+      - name: Publish release with APK
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/release/app-release.apk
+          generate_release_notes: true   # auto changelog from commits/PRs since the last tag
