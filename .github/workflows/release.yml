@@ -14,10 +14,10 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with: { distribution: temurin, java-version: "17" }
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
 
       # Stable signature from repo secrets if set; otherwise a throwaway CI key so the APK
       # still installs. ponytail: throwaway key changes per release (users reinstall to update)
@@ -43,7 +43,7 @@ jobs:
       - run: ./gradlew assembleRelease
 
       - name: Publish release with APK
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: app/build/outputs/apk/release/app-release.apk
           generate_release_notes: true   # auto changelog from commits/PRs since the last tag
