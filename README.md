@@ -74,7 +74,9 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
-CI needs these repository **secrets** (Settings → Secrets → Actions) for signing:
+GitHub Desktop: History → right-click the latest commit → **Create Tag…** (e.g. `v0.2.1`) → **Push origin**.
+
+Optional repository **secrets** (Settings → Secrets → Actions) keep the same signature across releases; without them CI signs with a fresh throwaway key each release:
 `KEYSTORE_BASE64` (base64 of `angra-release.jks`), `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
 
 ```bash
