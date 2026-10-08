@@ -67,14 +67,7 @@ keytool -genkeypair -v -keystore app/angra-release.jks -alias angra \
 
 ## Releasing on GitHub
 
-Push a tag and CI builds + publishes the signed APK automatically:
-
-```bash
-git tag v0.2.0
-git push origin v0.2.0
-```
-
-GitHub Desktop: History → right-click the latest commit → **Create Tag…** (e.g. `v0.2.1`) → **Push origin**.
+Every push to `main` publishes release `v<versionName>` (from `app/build.gradle.kts`) with the signed APK, if that version isn't released yet. To ship a new version: bump `versionName` (and `versionCode`), commit, **Push origin** in GitHub Desktop. No tags needed.
 
 Optional repository **secrets** (Settings → Secrets → Actions) keep the same signature across releases; without them CI signs with a fresh throwaway key each release:
 `KEYSTORE_BASE64` (base64 of `angra-release.jks`), `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
