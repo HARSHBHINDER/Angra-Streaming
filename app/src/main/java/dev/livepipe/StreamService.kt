@@ -110,6 +110,7 @@ class StreamService : Service(), ConnectChecker {
         if (prefs.recordWhileStreaming) runCatching { s.startRecord(newRecordingPath()) {} }
 
         startElapsed = SystemClock.elapsedRealtime()
+        liveSince.value = startElapsed
         if (prefs.bubbleEnabled && Build.VERSION.SDK_INT >= 23 &&
             android.provider.Settings.canDrawOverlays(this)) {
             BubbleService.start(this, prefs, startElapsed)
@@ -127,7 +128,7 @@ class StreamService : Service(), ConnectChecker {
         }
         projection?.stop()
         stream = null; projection = null; bitrateAdapter = null
-        state.value = State.IDLE; lastBitrate.value = 0L
+        state.value = State.IDLE; lastBitrate.value = 0L; liveSince.value = 0L
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -234,5 +235,6 @@ class StreamService : Service(), ConnectChecker {
         /** Process-wide stream state the Compose UI observes. */
         val state = MutableStateFlow(State.IDLE)
         val lastBitrate = MutableStateFlow(0L)   // last reported upload bitrate (bps) for the health meter
+        val liveSince = MutableStateFlow(0L)     // elapsedRealtime when the stream started; 0 = not streaming
     }
 }
