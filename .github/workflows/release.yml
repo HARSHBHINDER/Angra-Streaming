@@ -24,7 +24,7 @@ jobs:
         id: v
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then TAG="$GITHUB_REF_NAME"
-          else TAG="v$(grep -m1 versionName app/build.gradle.kts | grep -oE '[0-9]+(\.[0-9]+)+')"; fi
+          else TAG="v$(grep -m1 'versionName =' app/build.gradle.kts | grep -oE '[0-9]+(\.[0-9]+)+')"; fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           if gh release view "$TAG" >/dev/null 2>&1; then echo "exists=true" >> "$GITHUB_OUTPUT"; fi
           # ponytail: later steps all gated on this; split jobs if the workflow grows
