@@ -69,11 +69,11 @@ class BubbleService : Service() {
     private lateinit var capsuleText: TextView
     private lateinit var liveDot: View
     private var pulse: ObjectAnimator? = null
-    private lateinit var mic: Orb
-    private lateinit var screenOrb: Orb
-    private lateinit var rec: Orb
-    private lateinit var end: Orb
-    private lateinit var app: Orb
+    private var orbs: List<Pair<BubbleAction, Orb>> = emptyList()
+    private var flash: String? = null                 // short confirmation in the capsule ("Highlight marked…")
+    private var hiddenUntil = 0L                       // "Hide 30 s"
+    private var secure = true
+    private val clearFlash = Runnable { flash = null; refreshOrbit() }
     private var hubX = 0f; private var hubY = 0f
 
     private val tick = object : Runnable {
@@ -119,6 +119,8 @@ class BubbleService : Service() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT).apply { gravity = Gravity.TOP or Gravity.START }
         val p = Store(this).prefsBundle
+        secure = p.bubbleSecure
+        if (secure) lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_SECURE
         val (w, h) = screen()
         lp.x = (p.bubbleX * (w - size)).toInt(); lp.y = (p.bubbleY * (h - size)).toInt()
         root.setOnTouchListener(dragAndTap())
@@ -299,18 +301,8 @@ class BubbleService : Service() {
         handler.removeCallbacks(tuck)
         root.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
 
-        mic = Orb(R.drawable.ic_mic) { StreamService.toggleMic() }
-        screenOrb = Orb(R.drawable.ic_pause) { StreamService.toggleBreak() }
-        rec = Orb(R.drawable.ic_record) { StreamService.toggleRecord() }
-        end = Orb(R.drawable.ic_stop) {
-            if (endArmed) startService(Intent(this, StreamService::class.java).setAction(StreamService.ACTION_STOP))
-            else { endArmed = true; handler.postDelayed(disarmEnd, 3000) }
-        }
-        app = Orb(R.drawable.ic_home) {
-            startActivity(Intent(this, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
-            closeOrbit()
-        }
+        orbs = BubbleAction.slots(Store(this).prefsBundle.bubbleSlots).map { a -> a to Orb(a.icon) { run(a) } }
+        flash = null
         hub = ImageView(this).apply {
             setImageResource(R.drawable.ic_close)
             val pad = dp(17); setPadding(pad, pad, pad, pad)
@@ -339,7 +331,7 @@ class BubbleService : Service() {
         val st = FrameLayout(this).apply {
             background = scrim; clipChildren = false
             setOnClickListener { closeOrbit() }             // tap anywhere off the orbs folds them back
-            listOf(mic, screenOrb, rec, end, app).forEach { addView(it.view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)) }
+            orbs.forEach { addView(it.second.view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)) }
             addView(capsule, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             addView(hub, FrameLayout.LayoutParams(size, size))
             visibility = View.INVISIBLE                     // revealed once laid out, so nothing flashes at 0,0
@@ -354,6 +346,7 @@ class BubbleService : Service() {
         // Real frosted backdrop on Android 12+ (when the device has cross-window blur on).
         val blur = Build.VERSION.SDK_INT >= 31 && wm.isCrossWindowBlurEnabled
         if (blur) slp.flags = slp.flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
+        if (secure) slp.flags = slp.flags or WindowManager.LayoutParams.FLAG_SECURE
         stageLp = slp
         runCatching { wm.addView(st, slp) }.onFailure { stage = null; return }
 
@@ -364,9 +357,9 @@ class BubbleService : Service() {
             root.visibility = View.INVISIBLE                // the hub stands in for the bubble while open
             val w = st.width.toFloat(); val h = st.height.toFloat()
             val r = dp(RADIUS).toFloat()
-            val centres = orbitCentres(hubX, hubY, w, h, 5, r, SPAN_DEG)
+            val centres = orbitCentres(hubX, hubY, w, h, orbs.size, r, SPAN_DEG)
             val m = dp(40).toFloat()
-            listOf(mic, screenOrb, rec, end, app).forEachIndexed { i, o ->
+            orbs.map { it.second }.forEachIndexed { i, o ->
                 o.view.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
                 val (cx, cy) = centres[i]
                 val tx = cx.coerceIn(m, w - m) - o.view.measuredWidth / 2f
@@ -410,7 +403,7 @@ class BubbleService : Service() {
         closing = true
         handler.removeCallbacks(orbitTick); handler.removeCallbacks(autoClose); handler.removeCallbacks(disarmEnd)
         pulse?.cancel(); pulse = null
-        listOf(mic, screenOrb, rec, end, app).forEach { o ->
+        orbs.map { it.second }.forEach { o ->
             o.view.animate().translationX(hubX - o.view.width / 2f).translationY(hubY - dp(ORB) / 2f)
                 .scaleX(0.3f).scaleY(0.3f).alpha(0f).setStartDelay(0).setDuration(170)
                 .setInterpolator(AccelerateInterpolator()).start()
@@ -421,7 +414,7 @@ class BubbleService : Service() {
         handler.postDelayed({
             runCatching { wm.removeView(st) }
             stage = null; stageLp = null; closing = false; endArmed = false
-            root.visibility = View.VISIBLE
+            root.visibility = if (SystemClock.elapsedRealtime() < hiddenUntil) View.GONE else View.VISIBLE
             scheduleTuck()
         }, 190)
     }
@@ -431,16 +424,17 @@ class BubbleService : Service() {
         if (stage == null) return
         val c = StreamService.controls()
         val live = c != null
-        mic.paint(if (c?.micMuted == true) "Unmute" else "Mute", c?.micMuted == true, live,
-            if (c?.micMuted == true) R.drawable.ic_mic_off else R.drawable.ic_mic)
-        screenOrb.paint(if (c?.onBreak == true) "End break" else "Break", c?.onBreak == true, live)
-        rec.paint(if (c?.recording == true) "Stop rec" else "Record", c?.recording == true, live)
-        end.paint(if (endArmed) "Tap to end" else "End", endArmed, live)
-        app.paint("Open app", false, true)
+        orbs.forEach { (a, o) ->
+            val on = isOn(a, c)
+            val enabled = (!a.live || live) && (a != BubbleAction.REC_PAUSE || c?.recording == true)
+            o.paint(if (on) a.onLabel else a.label, on, enabled,
+                if (a == BubbleAction.MIC) (if (on) R.drawable.ic_mic_off else R.drawable.ic_mic) else null)
+        }
 
         capsuleText.text = when {
             !live -> "Preview  ·  go live to use controls"
             endArmed -> "Tap End again to stop streaming"
+            flash != null -> flash
             c.onBreak -> "ON BREAK  ${clock()}  ·  viewers see your break screen"
             else -> "LIVE  ${clock()}  ·  %.1f Mbps".format(StreamService.lastBitrate.value / 1_000_000f)
         }
@@ -455,6 +449,85 @@ class BubbleService : Service() {
                 duration = 750; repeatMode = ValueAnimator.REVERSE; repeatCount = ValueAnimator.INFINITE; start()
             }
         } else if ((!live || endArmed) && pulse != null) { pulse?.cancel(); pulse = null; liveDot.alpha = 1f }
+    }
+
+    private fun isOn(a: BubbleAction, c: StreamService.Companion.Controls?): Boolean = when (a) {
+        BubbleAction.MIC -> c?.micMuted == true
+        BubbleAction.BREAK -> c?.onBreak == true
+        BubbleAction.RECORD -> c?.recording == true
+        BubbleAction.END -> endArmed
+        BubbleAction.REC_PAUSE -> c?.recPaused == true
+        BubbleAction.GAME -> c?.gameMuted == true
+        BubbleAction.FACECAM -> c?.facecam == true
+        BubbleAction.OVERLAY -> c?.overlayHidden == true
+        BubbleAction.DND -> dndOn()
+        BubbleAction.DATA_SAVER -> c?.dataSaver == true
+        BubbleAction.ZOOM -> c?.zoomed == true
+        BubbleAction.TIMER -> showsTimer
+        BubbleAction.APP, BubbleAction.SCREENSHOT, BubbleAction.HIGHLIGHT, BubbleAction.HIDE -> false
+    }
+
+    private fun run(a: BubbleAction) {
+        when (a) {
+            BubbleAction.MIC -> StreamService.toggleMic()
+            BubbleAction.BREAK -> StreamService.toggleBreak()
+            BubbleAction.RECORD -> StreamService.toggleRecord()
+            BubbleAction.END ->
+                if (endArmed) startService(Intent(this, StreamService::class.java).setAction(StreamService.ACTION_STOP))
+                else { endArmed = true; handler.postDelayed(disarmEnd, 3000) }
+            BubbleAction.APP -> {
+                startActivity(Intent(this, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+                closeOrbit()
+            }
+            BubbleAction.SCREENSHOT -> {
+                closeOrbit()                                 // fold away first so the shot is clean
+                handler.postDelayed({
+                    StreamService.screenshot { ok ->
+                        handler.post { toast(if (ok) "Screenshot saved to Pictures" else "Couldn't save the screenshot") }
+                    }
+                }, 400)
+            }
+            BubbleAction.REC_PAUSE -> StreamService.toggleRecordPause()
+            BubbleAction.GAME -> StreamService.toggleGame()
+            BubbleAction.FACECAM -> if (!StreamService.toggleFacecam()) showFlash("Allow the camera in the app first")
+            BubbleAction.OVERLAY -> StreamService.toggleOverlay()
+            BubbleAction.DND -> if (!toggleDnd()) showFlash("Allow Do Not Disturb access, then tap again")
+            BubbleAction.HIGHLIGHT -> StreamService.markHighlight()?.let { showFlash("Highlight marked at $it") }
+            BubbleAction.DATA_SAVER -> StreamService.toggleDataSaver()
+            BubbleAction.ZOOM -> StreamService.toggleZoom()
+            BubbleAction.TIMER -> {
+                showsTimer = !showsTimer; render()
+                Store(this).let { it.prefsBundle = it.prefsBundle.copy(bubbleShowsTimer = showsTimer) }
+            }
+            BubbleAction.HIDE -> {
+                hiddenUntil = SystemClock.elapsedRealtime() + 30_000
+                closeOrbit()
+                handler.postDelayed({ if (stage == null) root.visibility = View.VISIBLE }, 30_000)
+            }
+        }
+    }
+
+    private fun showFlash(text: String) {
+        flash = text; refreshOrbit()
+        handler.removeCallbacks(clearFlash); handler.postDelayed(clearFlash, 2500)
+    }
+
+    private fun toast(text: String) = android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_SHORT).show()
+
+    private fun dndOn() = getSystemService(android.app.NotificationManager::class.java).currentInterruptionFilter >
+        android.app.NotificationManager.INTERRUPTION_FILTER_ALL
+
+    /** Do Not Disturb (priority only) on/off so notifications don't pop up on stream. False if access is missing. */
+    private fun toggleDnd(): Boolean {
+        val nm = getSystemService(android.app.NotificationManager::class.java)
+        if (!nm.isNotificationPolicyAccessGranted) {
+            startActivity(Intent(android.provider.Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return false
+        }
+        nm.setInterruptionFilter(if (dndOn()) android.app.NotificationManager.INTERRUPTION_FILTER_ALL
+            else android.app.NotificationManager.INTERRUPTION_FILTER_PRIORITY)
+        return true
     }
 
     private fun overlayType() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)

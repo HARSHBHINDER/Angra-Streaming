@@ -54,6 +54,14 @@ class StreamService : Service(), ConnectChecker {
     private var overlay: BaseObjectFilterRender? = null
     private var overlayAspect = 1f
     private var facecamLayer: SurfaceFilterRender? = null
+    // Bubble controls state (reset when the stream stops).
+    private var gameMuted = false
+    private var recPaused = false
+    private var overlayHidden = false
+    private var dataSaver = false
+    private var zoomed = false
+    private var sceneDest: Destination? = null
+    private var destName = ""
     private var micMuted = false                 // bubble control; keeps the mixer volume for unmute
     private var breakLayers = listOf<BaseObjectFilterRender>()
     private var canvasAspect = 16f / 9
@@ -105,7 +113,7 @@ class StreamService : Service(), ConnectChecker {
         val prefs = store.prefsBundle
         maxBitrate = dest.videoBitrate
         adaptive = prefs.adaptiveBitrate
-        destId = dest.id; this.audio = audio; canvasAspect = dest.canvasAspect()
+        destId = dest.id; this.audio = audio; canvasAspect = dest.canvasAspect(); destName = dest.name
         // Layer order = filter order: screen crop first, then overlay, then facecam on top.
         crop = CropFilterRender().also { s.getGlInterface().addFilter(it) }
         loadOverlay(s, dest.overlayUri)
@@ -143,6 +151,7 @@ class StreamService : Service(), ConnectChecker {
         stream = null; projection = null; bitrateAdapter = null
         audio = null; crop = null; overlay = null; facecamLayer = null; destId = null; micMuted = false
         breakLayers = emptyList(); onBreak.value = false
+        gameMuted = false; recPaused = false; overlayHidden = false; dataSaver = false; zoomed = false; sceneDest = null
         state.value = State.IDLE; lastBitrate.value = 0L; liveSince.value = 0L
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -213,7 +222,9 @@ class StreamService : Service(), ConnectChecker {
 
     /** Positions every layer from the channel's scene. Object filters take top-left % of the canvas. */
     private fun applyScene(d: Destination) {
-        val c = d.screenView(this).cropPercent()
+        sceneDest = d
+        // Bubble "Zoom" punches in 1.5x on top of the scene's own zoom.
+        val c = (if (zoomed) d.copy(screenZoom = (d.screenZoom * 1.5f).coerceAtMost(4f)) else d).screenView(this).cropPercent()
         crop?.setCropArea(c[0], c[1], c[2], c[3])
         overlay?.let {
             val h = Scene.overlayH(d.overlayW, overlayAspect, d.canvasAspect())
@@ -229,11 +240,38 @@ class StreamService : Service(), ConnectChecker {
 
     private fun applyVolumes(p: Prefs) {
         when (val a = audio) {
-            is MixAudioSource -> { a.microphoneVolume = if (micMuted) 0f else p.micVolume; a.internalVolume = p.gameVolume }
+            is MixAudioSource -> { a.microphoneVolume = if (micMuted) 0f else p.micVolume; a.internalVolume = if (gameMuted) 0f else p.gameVolume }
             is MicrophoneSource -> a.microphoneVolume = if (micMuted) 0f else p.micVolume
-            is InternalAudioSource -> a.internalVolume = p.gameVolume
+            is InternalAudioSource -> a.internalVolume = if (gameMuted) 0f else p.gameVolume
             else -> Unit
         }
+    }
+
+    /** Saves a frame of the stream output (exactly what viewers see) to Pictures/Angra Streaming. */
+    private fun savePicture(bmp: android.graphics.Bitmap): Boolean = runCatching {
+        val name = "stream_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".jpg"
+        if (Build.VERSION.SDK_INT >= 29) {
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, name)
+                put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Angra Streaming")
+            }
+            val uri = contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
+            contentResolver.openOutputStream(uri)?.use { bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, it) } ?: false
+        } else {
+            File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), name).outputStream()
+                .use { bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, it) }
+        }
+    }.getOrDefault(false)
+
+    /** Notes the stream time in highlights.txt beside the recordings, to find the moment later. */
+    private fun markHighlight(): String {
+        val s = (SystemClock.elapsedRealtime() - startElapsed) / 1000
+        val t = "%d:%02d:%02d".format(s / 3600, (s % 3600) / 60, s % 60)
+        val dir = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), "LivePipe").apply { mkdirs() }
+        val now = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date())
+        File(dir, "highlights.txt").appendText("$now  stream time $t  $destName\n")
+        return t
     }
 
     private fun newRecordingPath(): String {
@@ -300,10 +338,16 @@ class StreamService : Service(), ConnectChecker {
         fun updateVolumes(p: Prefs) { live?.applyVolumes(p) }
 
         /** Bubble controls. All no-ops when nothing is live. */
-        data class Controls(val micMuted: Boolean, val onBreak: Boolean, val recording: Boolean)
+        data class Controls(
+            val micMuted: Boolean, val onBreak: Boolean, val recording: Boolean, val recPaused: Boolean,
+            val gameMuted: Boolean, val facecam: Boolean, val overlayHidden: Boolean, val dataSaver: Boolean, val zoomed: Boolean,
+        )
 
         fun controls(): Controls? = live?.let { svc ->
-            svc.stream?.let { Controls(svc.micMuted, onBreak.value, it.isRecording) }
+            svc.stream?.let {
+                Controls(svc.micMuted, onBreak.value, it.isRecording, svc.recPaused, svc.gameMuted, svc.facecamLayer != null,
+                    svc.overlayHidden, svc.dataSaver, svc.zoomed)
+            }
         }
 
         /** True while the break screen is on air; the Stream tab and bubble reflect it. */
@@ -317,7 +361,54 @@ class StreamService : Service(), ConnectChecker {
         fun toggleBreak() = setBreak(!onBreak.value)
 
         fun toggleRecord() {
-            live?.run { stream?.let { if (it.isRecording) it.stopRecord() else runCatching { it.startRecord(newRecordingPath()) {} } } }
+            live?.run {
+                stream?.let { if (it.isRecording) it.stopRecord() else runCatching { it.startRecord(newRecordingPath()) {} } }
+                recPaused = false
+            }
         }
+
+        fun toggleRecordPause() {
+            live?.run {
+                stream?.takeIf { it.isRecording }?.let { if (recPaused) it.resumeRecord() else it.pauseRecord(); recPaused = !recPaused }
+            }
+        }
+
+        fun toggleGame() { live?.run { gameMuted = !gameMuted; applyVolumes(Store(this).prefsBundle) } }
+
+        fun toggleOverlay() { live?.run { overlayHidden = !overlayHidden; overlay?.alpha = if (overlayHidden) 0f else 1f } }
+
+        /** Halves the bitrate for weak connections (the adaptive ceiling follows). */
+        fun toggleDataSaver() {
+            live?.run {
+                dataSaver = !dataSaver
+                val b = if (dataSaver) maxBitrate / 2 else maxBitrate
+                bitrateAdapter?.setMaxBitrate(b); stream?.setVideoBitrateOnFly(b)
+            }
+        }
+
+        fun toggleZoom() { live?.run { zoomed = !zoomed; sceneDest?.let { applyScene(it) } } }
+
+        /** Facecam on/off mid-stream. False when the camera permission hasn't been granted in the app. */
+        fun toggleFacecam(): Boolean = live?.run {
+            val s = stream ?: return@run false
+            facecamLayer?.let {
+                s.getGlInterface().removeFilter(it); facecam?.stop(); facecam = null; facecamLayer = null
+                return@run true
+            }
+            if (checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) return@run false
+            addFacecam(s)
+            sceneDest?.let { applyScene(it) }
+            if (onBreak.value) applyBreak(true)        // the break screen stays on top of everything
+            true
+        } ?: false
+
+        /** Saves what viewers see right now to Pictures; [done] runs on a background thread. */
+        fun screenshot(done: (Boolean) -> Unit) {
+            val svc = live ?: return done(false)
+            val gl = svc.stream?.getGlInterface() ?: return done(false)
+            gl.takePhoto { bmp -> Thread { done(svc.savePicture(bmp)) }.start() }
+        }
+
+        fun markHighlight(): String? = live?.markHighlight()
     }
 }

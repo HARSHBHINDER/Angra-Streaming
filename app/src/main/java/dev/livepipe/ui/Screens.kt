@@ -692,6 +692,49 @@ private fun BreakCard(prefs: Prefs, onPrefs: (Prefs) -> Unit, live: Boolean) {
     }
 }
 
+/** Five bubble slots on top, every available control below: tap a slot, then a control to put there. */
+@Composable
+private fun BubbleSlotsEditor(prefs: Prefs, onPrefs: (Prefs) -> Unit) {
+    val slots = dev.livepipe.BubbleAction.slots(prefs.bubbleSlots)
+    var sel by remember { mutableStateOf(0) }
+    InsetCard {
+        Row(Modifier.fillMaxWidth().padding(vertical = 14.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+            slots.forEachIndexed { i, a -> ActionChip(a, selected = i == sel, used = true) { sel = i } }
+        }
+        Hairline()
+        Text("Put in slot ${sel + 1}", fontSize = 13.sp, color = Ios.secondaryLabel,
+            modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp))
+        dev.livepipe.BubbleAction.entries.chunked(4).forEach { row ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp)) {
+                row.forEach { a ->
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        ActionChip(a, selected = a == slots[sel], used = a in slots) {
+                            onPrefs(prefs.copy(bubbleSlots = dev.livepipe.BubbleAction.assign(slots, sel, a).joinToString(",") { it.id }))
+                        }
+                    }
+                }
+                repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun ActionChip(a: dev.livepipe.BubbleAction, selected: Boolean, used: Boolean, onClick: () -> Unit) {
+    Column(Modifier.width(72.dp).iosTap(onClick = onClick), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier.size(48.dp)
+                .background(if (selected) EmberBrush else SolidColor(if (used) Color(0xFF3A3A3C) else Color(0xFF1C1C1E)), CircleShape)
+                .border(if (selected) 2.dp else 0.5.dp, if (selected) Color.White.copy(alpha = 0.6f) else Ios.separator, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) { Icon(painterResource(a.icon), a.label, tint = Color.White, modifier = Modifier.size(22.dp)) }
+        Text(a.label, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            color = if (used || selected) MaterialTheme.colorScheme.onSurface else Ios.secondaryLabel,
+            modifier = Modifier.padding(top = 5.dp))
+    }
+}
+
 @Composable
 fun QuickToggle(icon: Int, label: String, on: Boolean, tint: Color, modifier: Modifier, onClick: () -> Unit) {
     val bg by animateColorAsState(if (on) tint else MaterialTheme.colorScheme.surface, label = "qt")
@@ -1092,6 +1135,10 @@ fun SettingsScreen(
                 IosSwitch(prefs.bubbleEdgeHide, { onPrefs(prefs.copy(bubbleEdgeHide = it)) })
             }
             Hairline()
+            RowItem("Hide bubble from stream") {
+                IosSwitch(prefs.bubbleSecure, { onPrefs(prefs.copy(bubbleSecure = it)) })
+            }
+            Hairline()
             RowItem("Bubble shows") {
                 Chips(listOf(false, true), prefs.bubbleShowsTimer, { if (it) "Timer" else "Icon" }, Modifier.width(140.dp)) {
                     onPrefs(prefs.copy(bubbleShowsTimer = it))
@@ -1109,7 +1156,12 @@ fun SettingsScreen(
         SectionHeader("Bubble transparency · ${(prefs.bubbleTransparency * 100).toInt()}%")
         IosSlider(prefs.bubbleTransparency, { onPrefs(prefs.copy(bubbleTransparency = it)) },
             valueRange = 0f..Prefs.BUBBLE_MAX_TRANSPARENCY)
-        Footer("Preview places the bubble before you go live: drag it anywhere, it snaps to the nearest edge. Edge bar: an idle bubble tucks into a slim handle; tap it to pop out. On Android 14+, share \"A single app\" when going live and the bubble stays out of the stream. The system recording indicator always stays visible.")
+        Footer("Preview places the bubble before you go live: drag it anywhere, it snaps to the nearest edge. Edge bar: an idle bubble tucks into a slim handle; tap it to pop out. Hide bubble from stream marks the bubble private, so capture can't show its content (most phones show a blank patch instead). For a clean stream on Android 14+, share \"A single app\" when going live and the bubble stays out completely. The system recording indicator always stays visible.")
+
+        SectionHeader("Bubble controls")
+        BubbleSlotsEditor(prefs, onPrefs)
+        Footer("Tap a slot, then tap what it should do. These five sit around the bubble while you're live, " +
+            "so you never have to come back to the app. Already-used controls swap places.")
 
         SectionHeader("Audio source")
         Chips(listOf(Prefs.AUDIO_MIC, Prefs.AUDIO_GAME, Prefs.AUDIO_MIX), prefs.audioSource,

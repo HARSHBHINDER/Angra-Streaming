@@ -102,6 +102,8 @@ data class Prefs(
     val bubbleX: Float = 0f,                     // bubble position as screen fractions (snapped to an edge)
     val bubbleY: Float = 0.3f,
     val breakImageUri: String = "",              // break screen image (copy in app storage); empty = plain black
+    val bubbleSlots: String = BubbleAction.DEFAULT_IDS,   // the 5 bubble controls, comma-joined action ids
+    val bubbleSecure: Boolean = true,            // FLAG_SECURE on the bubble so capture doesn't show its content
     val bubbleEdgeHide: Boolean = true,          // tuck into a slim edge handle when idle; tap the handle to pop out
 ) {
     companion object {
@@ -156,6 +158,8 @@ class Store(context: Context) {
                 bubbleX = o.optDouble("bx", 0.0).toFloat(), bubbleY = o.optDouble("by", 0.3).toFloat(),
                 bubbleEdgeHide = o.optBoolean("beh", true),
                 breakImageUri = o.optString("brk", ""),
+                bubbleSlots = o.optString("bsl", BubbleAction.DEFAULT_IDS),
+                bubbleSecure = o.optBoolean("bsec", true),
             )
         }
         set(p) {
@@ -165,6 +169,7 @@ class Store(context: Context) {
                 put("as", p.audioSource); put("ab", p.adaptiveBitrate)
                 put("mic", p.micDeviceId); put("mv", p.micVolume.toDouble()); put("gv", p.gameVolume.toDouble())
                 put("bx", p.bubbleX.toDouble()); put("by", p.bubbleY.toDouble()); put("beh", p.bubbleEdgeHide); put("brk", p.breakImageUri)
+                put("bsl", p.bubbleSlots); put("bsec", p.bubbleSecure)
             }
             prefs.edit().putString("prefs", o.toString()).apply()
         }
