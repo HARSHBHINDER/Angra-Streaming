@@ -62,6 +62,12 @@ class StreamService : Service(), ConnectChecker {
     private var zoomed = false
     private var sceneDest: Destination? = null
     private var destName = ""
+    // Super Chat alerts: one card at a time on its own layer, queued.
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private var chat: YouTubeChat? = null
+    private var alertLayer: ImageFilterRender? = null
+    private val alertQueue = ArrayDeque<SuperChat>()
+    private var alertBusy = false
     private var micMuted = false                 // bubble control; keeps the mixer volume for unmute
     private var breakLayers = listOf<BaseObjectFilterRender>()
     private var canvasAspect = 16f / 9
@@ -123,6 +129,10 @@ class StreamService : Service(), ConnectChecker {
         applyScene(dest)
         applyVolumes(prefs)
         s.startStream(dest.endpoint())
+        superChatStatus.value = ""
+        if (prefs.superChat && prefs.ytApiKey.isNotBlank() && dest.ytSource.isNotBlank()) {
+            chat = YouTubeChat(prefs.ytApiKey, dest.ytSource, { e -> main.post { queueAlert(e) } }, { superChatStatus.value = it })
+        }
         live = this
         // OBS-style stream delay: buffers encoded output N seconds before sending. ponytail: cheap for
         // short delays (~bitrate × seconds of RAM); long delays at high bitrate cost real memory.
@@ -140,6 +150,9 @@ class StreamService : Service(), ConnectChecker {
 
     private fun stopEverything() {
         BubbleService.stop(this)
+        chat?.stop(); chat = null
+        main.removeCallbacksAndMessages(null)
+        alertQueue.clear(); alertBusy = false; alertLayer = null; superChatStatus.value = ""
         facecam?.stop(); facecam = null
         stream?.run {
             if (isRecording) stopRecord()
@@ -244,6 +257,49 @@ class StreamService : Service(), ConnectChecker {
             is MicrophoneSource -> a.microphoneVolume = if (micMuted) 0f else p.micVolume
             is InternalAudioSource -> a.internalVolume = if (gameMuted) 0f else p.gameVolume
             else -> Unit
+        }
+    }
+
+    private fun queueAlert(e: SuperChat) { alertQueue.addLast(e); if (!alertBusy) showNextAlert() }
+
+    /** Rises and fades the next card in at the scene's alert spot, holds it, fades it out, then the next. */
+    private fun showNextAlert() {
+        val e = alertQueue.removeFirstOrNull()
+        val s = stream
+        val d = sceneDest
+        if (e == null || s == null || d == null) { alertBusy = false; return }
+        alertBusy = true
+        val p = Store(this).prefsBundle
+        val bmp = SuperChatCard.render(e, p.alertStyle, p.alertShowTotal)
+        val f = alertLayer ?: ImageFilterRender().also {
+            it.setImage(bmp); it.alpha = 0f; s.getGlInterface().addFilter(it); alertLayer = it
+        }
+        f.setImage(bmp)
+        val w = d.alertW
+        val h = w * canvasAspect * bmp.height / bmp.width
+        val x = (d.alertX - w / 2) * 100
+        val y = (d.alertY - h / 2) * 100
+        f.setScale(w * 100, h * 100)
+        animateAlert(f, 0f, 1f, x, y, 420) {
+            main.postDelayed({
+                animateAlert(f, 1f, 0f, x, y, 320) { main.postDelayed({ showNextAlert() }, 450) }
+            }, p.alertSeconds * 1000L)
+        }
+    }
+
+    private fun animateAlert(f: ImageFilterRender, from: Float, to: Float, x: Float, y: Float, ms: Long, done: () -> Unit) {
+        android.animation.ValueAnimator.ofFloat(from, to).apply {
+            duration = ms
+            interpolator = android.view.animation.DecelerateInterpolator(2f)
+            addUpdateListener {
+                val a = it.animatedValue as Float
+                f.alpha = a
+                f.setPosition(x, y + (1 - a) * 4f)              // rises into place as it appears
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) = done()
+            })
+            start()
         }
     }
 
@@ -410,5 +466,11 @@ class StreamService : Service(), ConnectChecker {
         }
 
         fun markHighlight(): String? = live?.markHighlight()
+
+        /** Super Chat connection status for the Super Chat screen ("Connected…", errors); empty when off. */
+        val superChatStatus = MutableStateFlow("")
+
+        /** Plays a sample card on the live stream, so placement and style can be checked on air. */
+        fun testSuperChat(tier: Int) { live?.queueAlert(SuperChatCard.sample(tier).copy(id = "test-${System.nanoTime()}")) }
     }
 }

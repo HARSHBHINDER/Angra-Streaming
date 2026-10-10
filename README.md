@@ -31,6 +31,7 @@ Direct latest APK: `https://github.com/HARSHBHINDER/Angra-Streaming/releases/lat
 | **Per-channel encoding** | Resolution 360p–1080p, 30/60 fps, orientation, H.264/HEVC, keyframe interval, video bitrate (CBR, 100-kbps steps), audio bitrate, sample rate, stereo. |
 | **Facecam** | Front-camera picture-in-picture, size + corner selectable. |
 | **Overlay** | Per-channel image or animated GIF (PNG/JPG/WebP/GIF), composited on the stream. |
+| **Super Chat alerts** | YouTube Super Chats and Super Stickers appear on stream as a card: Ember, Classic (YouTube tier colours), Minimal or Neon style, with avatar, name, amount, message and the supporter's total this stream. Place and size it in the Scene editor (Alerts layer); set duration; send a test while live. Uses the official YouTube Data API with your own free key. |
 | **Floating bubble** | Tap for 5 controls you pick from 16 (Settings → Bubble controls): mute mic, break screen, record, pause recording, screenshot, game audio, facecam, overlay, silence alerts, highlight marker, data saver, zoom, end stream, open app, timer face, hide 30 s. Can be marked private so capture doesn't show it. Snaps to edges, hides to an edge bar, icon or live timer, custom image, transparency up to 95%. |
 | **Stream delay** | OBS-style delay per channel, 0 s–10 min. |
 | **Recording** | Record to MP4 while streaming. |

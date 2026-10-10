@@ -39,6 +39,10 @@ data class Destination(
     val facecamX: Float = 0.17f,            // facecam centre, 0..1
     val facecamY: Float = 0.81f,
     val pinned: Boolean = false,            // pinned channels list first, in their own order
+    val ytSource: String = "",              // YouTube @handle, channel ID or live link for Super Chat alerts
+    val alertX: Float = 0.5f,               // Super Chat card centre, 0..1
+    val alertY: Float = 0.2f,
+    val alertW: Float = 0.42f,              // card width as a fraction of canvas width (height follows the card)
 ) {
     /** Full endpoint RootEncoder streams to. Guards the slash between url and key. */
     fun endpoint(): String = if (key.isBlank()) url else url.trimEnd('/') + "/" + key
@@ -52,6 +56,7 @@ data class Destination(
         put("sf", screenFit); put("sz", screenZoom.toDouble()); put("spx", screenPanX.toDouble()); put("spy", screenPanY.toDouble())
         put("ox", overlayX.toDouble()); put("oy", overlayY.toDouble()); put("ow", overlayW.toDouble())
         put("fcx", facecamX.toDouble()); put("fcy", facecamY.toDouble()); put("pin", pinned)
+        put("yts", ytSource); put("ax", alertX.toDouble()); put("ay", alertY.toDouble()); put("aw", alertW.toDouble())
     }
 
     companion object {
@@ -73,6 +78,9 @@ data class Destination(
             facecamX = o.optDouble("fcx", cornerCentre(o.optInt("fcc", 2), o.optInt("fcs", 30), true)).toFloat(),
             facecamY = o.optDouble("fcy", cornerCentre(o.optInt("fcc", 2), o.optInt("fcs", 30), false)).toFloat(),
             pinned = o.optBoolean("pin", false),
+            ytSource = o.optString("yts", ""),
+            alertX = o.optDouble("ax", 0.5).toFloat(), alertY = o.optDouble("ay", 0.2).toFloat(),
+            alertW = o.optDouble("aw", 0.42).toFloat(),
         )
 
         private fun cornerCentre(corner: Int, scalePct: Int, x: Boolean): Double {
@@ -101,6 +109,11 @@ data class Prefs(
     val gameVolume: Float = 1f,
     val bubbleX: Float = 0f,                     // bubble position as screen fractions (snapped to an edge)
     val bubbleY: Float = 0.3f,
+    val superChat: Boolean = false,              // show YouTube Super Chats on stream
+    val ytApiKey: String = "",                   // the streamer's own YouTube Data API key (encrypted store)
+    val alertStyle: Int = 0,                     // SuperChatCard.STYLES index
+    val alertSeconds: Int = 8,
+    val alertShowTotal: Boolean = true,          // add the supporter's running total this stream
     val breakImageUri: String = "",              // break screen image (copy in app storage); empty = plain black
     val bubbleSlots: String = BubbleAction.DEFAULT_IDS,   // the 5 bubble controls, comma-joined action ids
     val bubbleSecure: Boolean = true,            // FLAG_SECURE on the bubble so capture doesn't show its content
@@ -158,6 +171,8 @@ class Store(context: Context) {
                 bubbleX = o.optDouble("bx", 0.0).toFloat(), bubbleY = o.optDouble("by", 0.3).toFloat(),
                 bubbleEdgeHide = o.optBoolean("beh", true),
                 breakImageUri = o.optString("brk", ""),
+                superChat = o.optBoolean("sc", false), ytApiKey = o.optString("ytk", ""),
+                alertStyle = o.optInt("ast", 0), alertSeconds = o.optInt("asec", 8), alertShowTotal = o.optBoolean("atot", true),
                 bubbleSlots = o.optString("bsl", BubbleAction.DEFAULT_IDS),
                 bubbleSecure = o.optBoolean("bsec", true),
             )
@@ -170,6 +185,8 @@ class Store(context: Context) {
                 put("mic", p.micDeviceId); put("mv", p.micVolume.toDouble()); put("gv", p.gameVolume.toDouble())
                 put("bx", p.bubbleX.toDouble()); put("by", p.bubbleY.toDouble()); put("beh", p.bubbleEdgeHide); put("brk", p.breakImageUri)
                 put("bsl", p.bubbleSlots); put("bsec", p.bubbleSecure)
+                put("sc", p.superChat); put("ytk", p.ytApiKey); put("ast", p.alertStyle); put("asec", p.alertSeconds)
+                put("atot", p.alertShowTotal)
             }
             prefs.edit().putString("prefs", o.toString()).apply()
         }

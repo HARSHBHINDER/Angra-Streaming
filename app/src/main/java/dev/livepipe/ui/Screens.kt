@@ -330,6 +330,8 @@ fun App(
 ) {
     var tab by remember { mutableStateOf(0) }
     var sceneFor by remember { mutableStateOf<Destination?>(null) }   // scene editor opened from the Stream tab
+    var sceneAlerts by remember { mutableStateOf(false) }               // ...opened on the Super Chat alert layer
+    var superChat by remember { mutableStateOf(false) }
     var destinations by remember { mutableStateOf(initialDestinations) }
     var activeId by remember { mutableStateOf(initialActiveId) }
 
@@ -365,15 +367,22 @@ fun App(
             EmberBackdrop()
             val editingScene = sceneFor
             if (editingScene != null) {
-                SceneEditor(editingScene, prefs, onPrefs, onCancel = { sceneFor = null }, onDone = { d ->
+                SceneEditor(editingScene, prefs, onPrefs, onCancel = { sceneFor = null; sceneAlerts = false }, onDone = { d ->
                     saveDest(destinations.map { if (it.id == d.id) d else it }, activeId)
                     StreamService.updateScene(d)          // live: layers move on air
-                    sceneFor = null
-                })
+                    sceneFor = null; sceneAlerts = false
+                }, alerts = sceneAlerts)
+            } else if (superChat) {
+                val active = destinations.firstOrNull { it.id == activeId } ?: destinations.firstOrNull()
+                SuperChatScreen(active, prefs, onPrefs,
+                    onDest = { d -> saveDest(destinations.map { if (it.id == d.id) d else it }, activeId) },
+                    onPlace = { sceneAlerts = true; sceneFor = active },
+                    onClose = { superChat = false })
             } else when (tab) {
                 0 -> StreamScreen(destinations, activeId, { saveDest(destinations, it) }, { tab = 1 },
                     prefs, onToggleStream, onPrefs,
-                    onScene = { sceneFor = destinations.firstOrNull { it.id == activeId } ?: destinations.firstOrNull() })
+                    onScene = { sceneFor = destinations.firstOrNull { it.id == activeId } ?: destinations.firstOrNull() },
+                    onSuperChat = { superChat = true })
                 1 -> DestinationsScreen(destinations, activeId, ::saveDest, prefs, onPrefs)
                 else -> SettingsScreen(prefs, onPickBubbleImage, micDevices, onPrefs, onPreviewBubble)
             }
@@ -408,6 +417,7 @@ private val Tnum = TextStyle(fontFeatureSettings = "tnum")   // fixed-width digi
 fun StreamScreen(
     destinations: List<Destination>, activeId: String?, onSelect: (String) -> Unit, onManage: () -> Unit,
     prefs: Prefs, onToggle: () -> Unit, onPrefs: (Prefs) -> Unit, onScene: () -> Unit,
+    onSuperChat: () -> Unit = {},
 ) {
     val active = destinations.firstOrNull { it.id == activeId } ?: destinations.firstOrNull()
     val state by StreamService.state.collectAsState()
@@ -500,6 +510,31 @@ fun StreamScreen(
         }
 
         BreakCard(prefs, onPrefs, live)
+
+        // Super Chat alerts: paid messages from YouTube live chat, shown on stream.
+        val scStatus by StreamService.superChatStatus.collectAsState()
+        Row(
+            Modifier.padding(horizontal = 16.dp).padding(top = 12.dp).fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(20.dp))
+                .iosTap { onSuperChat() }.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(34.dp).background(Brush.linearGradient(listOf(Color(0xFFFFCA28), Color(0xFFF57C00), Color(0xFFE91E63))),
+                RoundedCornerShape(9.dp)), contentAlignment = Alignment.Center) {
+                Text("$", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            }
+            Spacer(Modifier.size(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Super Chat alerts", fontWeight = FontWeight.SemiBold)
+                Text(when {
+                    !prefs.superChat -> "Off · show paid YouTube messages on stream"
+                    live && scStatus.isNotBlank() -> scStatus
+                    prefs.ytApiKey.isBlank() -> "On · add your YouTube key to connect"
+                    else -> "On · ${dev.livepipe.SuperChatCard.STYLES[prefs.alertStyle.coerceIn(0, 3)]} style, ${prefs.alertSeconds} s"
+                }, fontSize = 13.sp, color = Ios.secondaryLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Text("›", color = Ios.secondaryLabel, fontSize = 22.sp)
+        }
 
         // Channel switcher: pick where to go live without leaving the tab (locked while live).
         Row(Modifier.fillMaxWidth().padding(end = 32.dp), verticalAlignment = Alignment.Bottom) {

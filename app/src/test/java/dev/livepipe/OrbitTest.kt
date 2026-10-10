@@ -24,6 +24,16 @@ class OrbitTest {
         assertEquals(BubbleAction.SLOTS, t.distinct().size)
     }
 
+    @Test fun youTubeSourceParsing() {
+        assertEquals("dQw4w9WgXcQ", YouTubeChat.parse("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=3")?.videoId)
+        assertEquals("dQw4w9WgXcQ", YouTubeChat.parse("https://youtube.com/live/dQw4w9WgXcQ?si=x")?.videoId)
+        assertEquals("dQw4w9WgXcQ", YouTubeChat.parse("youtu.be/dQw4w9WgXcQ")?.videoId)
+        assertEquals("UC_x5XG1OV2P6uZZ5FSM9Ttw", YouTubeChat.parse("youtube.com/channel/UC_x5XG1OV2P6uZZ5FSM9Ttw")?.channelId)
+        assertEquals("GoogleDevelopers", YouTubeChat.parse("https://www.youtube.com/@GoogleDevelopers/live")?.handle)
+        assertEquals("angra", YouTubeChat.parse("@angra")?.handle)
+        assertEquals(null, YouTubeChat.parse("hello world"))
+    }
+
     @Test fun rightEdgeBubbleFansLeft() {
         val c = BubbleService.orbitCentres(1052f, 1200f, 1080f, 2400f, 5, 300f, 150.0)
         assertTrue(c.all { it.first < 1052f })

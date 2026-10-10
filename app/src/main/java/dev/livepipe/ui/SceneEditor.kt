@@ -69,6 +69,7 @@ import kotlin.math.roundToInt
 private const val SCREEN = 0
 private const val OVERLAY = 1
 private const val FACECAM = 2
+private const val ALERTS = 3
 
 /**
  * OBS-style scene editor. The canvas is the real stream shape (e.g. 16:9 for YouTube), not the phone's.
@@ -79,10 +80,11 @@ private const val FACECAM = 2
 fun SceneEditor(
     draft: Destination, prefs: Prefs, onPrefs: (Prefs) -> Unit,
     onCancel: () -> Unit, onDone: (Destination) -> Unit,
+    alerts: Boolean = false,                       // open with the Super Chat alert layer selected
 ) {
     val ctx = LocalContext.current
     var d by remember { mutableStateOf(draft) }
-    var layer by remember { mutableIntStateOf(SCREEN) }
+    var layer by remember { mutableIntStateOf(if (alerts) ALERTS else SCREEN) }
     var fcScale by remember { mutableFloatStateOf(draft.facecamScale.toFloat()) }   // float so pinches accumulate
     val sourceAspect = remember(d.portrait) { phoneAspect(ctx, d.portrait) }
     val canvasAspect = d.canvasAspect()
@@ -101,6 +103,12 @@ fun SceneEditor(
         if (uri != null) copyOverlay(ctx, uri, d.id)?.let { d = d.copy(overlayUri = it); layer = OVERLAY }
     }
     val view = Scene.screenView(sourceAspect, canvasAspect, d.screenFit, d.screenZoom, d.screenPanX, d.screenPanY)
+    // The real Super Chat card in the chosen style, so placement is judged on the actual thing.
+    val alertBmp = remember(prefs.alertStyle, prefs.alertShowTotal) {
+        dev.livepipe.SuperChatCard.render(dev.livepipe.SuperChatCard.sample(), prefs.alertStyle, prefs.alertShowTotal).asImageBitmap()
+    }
+    val alertAspect = alertBmp.width.toFloat() / alertBmp.height
+    val showAlerts = prefs.superChat || layer == ALERTS
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).verticalScroll(rememberScrollState())) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
@@ -127,7 +135,9 @@ fun SceneEditor(
                             val c = cur
                             val f = fcScale / 100f
                             val oh = Scene.overlayH(c.overlayW, overlayAspect, canvasAspect)
+                            val ah = c.alertW * canvasAspect / alertAspect
                             layer = when {
+                                showAlerts && abs(x - c.alertX) < c.alertW / 2 && abs(y - c.alertY) < ah / 2 -> ALERTS
                                 c.facecam && abs(x - c.facecamX) < f / 2 && abs(y - c.facecamY) < f / 2 -> FACECAM
                                 c.overlayUri.isNotBlank() && abs(x - c.overlayX) < c.overlayW / 2 &&
                                     abs(y - c.overlayY) < oh / 2 -> OVERLAY
@@ -144,6 +154,8 @@ fun SceneEditor(
                                 OVERLAY -> c.copy(overlayX = (c.overlayX + dx).coerceIn(-0.5f, 1.5f),
                                     overlayY = (c.overlayY + dy).coerceIn(-0.5f, 1.5f),
                                     overlayW = (c.overlayW * zoom).coerceIn(0.05f, 2f))
+                                ALERTS -> c.copy(alertX = (c.alertX + dx).coerceIn(0f, 1f), alertY = (c.alertY + dy).coerceIn(0f, 1f),
+                                    alertW = (c.alertW * zoom).coerceIn(0.15f, 0.9f))
                                 FACECAM -> {
                                     fcScale = (fcScale * zoom).coerceIn(10f, 60f)
                                     c.copy(facecamX = (c.facecamX + dx).coerceIn(0f, 1f), facecamY = (c.facecamY + dy).coerceIn(0f, 1f),
@@ -177,6 +189,13 @@ fun SceneEditor(
                         OverlayPreview(d.overlayUri, overlayBmp)
                     }
                 }
+                if (showAlerts) {
+                    val ah = d.alertW * canvasAspect / alertAspect
+                    LayerBox(d.alertX - d.alertW / 2, d.alertY - ah / 2, d.alertW, ah, w, h, layer == ALERTS) {
+                        androidx.compose.foundation.Image(alertBmp, "Super Chat", contentScale = androidx.compose.ui.layout.ContentScale.FillBounds,
+                            modifier = Modifier.fillMaxSize())
+                    }
+                }
                 if (d.facecam) {
                     val f = fcScale / 100f
                     LayerBox(d.facecamX - f / 2, d.facecamY - f / 2, f, f, w, h, layer == FACECAM) {
@@ -192,7 +211,7 @@ fun SceneEditor(
 
         // ---- Layer controls ----
         SectionHeader("Layer")
-        Chips(listOf(SCREEN, OVERLAY, FACECAM), layer, { listOf("Screen", "Overlay", "Facecam")[it] }) { layer = it }
+        Chips(listOf(SCREEN, OVERLAY, FACECAM, ALERTS), layer, { listOf("Screen", "Overlay", "Facecam", "Alerts")[it] }) { layer = it }
         Spacer(Modifier.height(10.dp))
         when (layer) {
             SCREEN -> {
@@ -232,6 +251,11 @@ fun SceneEditor(
                     }
                 }
                 Footer("PNG, JPG, WebP or animated GIF, kept at its own shape (never stretched). Drag it past the edges if you like — only what's inside the frame is streamed. The image is copied into the app.")
+            }
+            ALERTS -> {
+                SectionHeader("Size · ${(d.alertW * 100).roundToInt()}% of width")
+                IosSlider(d.alertW, { d = d.copy(alertW = it) }, valueRange = 0.15f..0.9f)
+                Footer("Where Super Chats appear on stream. Style, timing and the YouTube connection are in Super Chat on the Stream tab.")
             }
             else -> {
                 InsetCard { RowItem("Show facecam") { IosSwitch(d.facecam, { d = d.copy(facecam = it); layer = FACECAM }) } }
