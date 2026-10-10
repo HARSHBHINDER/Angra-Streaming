@@ -1,11 +1,15 @@
 package dev.livepipe
 
+import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Point
+import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
@@ -14,22 +18,31 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.view.WindowManager
+import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * Floating control bubble. Shows a custom icon or the elapsed stream timer. Drag it anywhere; on release it
  * snaps to the nearest screen edge. With edge-hide on, an idle bubble tucks behind the edge leaving a slim
- * handle; tapping the handle pops it out. Tapping the bubble opens the control panel: mute mic, hide screen,
- * record, end stream, open app. Runs in preview mode (before going live) so it can be placed, and live mode
- * during a stream. The OS capture indicator is separate and always visible.
+ * handle; tapping the handle pops it out. Tapping the bubble blooms the control orbit: glass orbs fan out
+ * on an arc toward the middle of the screen (mute mic, hide screen, record, end, open app) over a blurred
+ * backdrop, with a live status capsule. Runs in preview mode (before going live) so it can be placed, and
+ * live mode during a stream. The OS capture indicator is separate and always visible.
  */
 class BubbleService : Service() {
     private lateinit var wm: WindowManager
@@ -46,15 +59,22 @@ class BubbleService : Service() {
     private val size get() = dp(56)
     private val handleVisible get() = dp(14)     // how much of a tucked bubble stays on screen
 
-    // Control panel (second overlay window next to the bubble).
-    private var panel: LinearLayout? = null
-    private lateinit var status: TextView
-    private lateinit var micBtn: ImageView
-    private lateinit var screenBtn: ImageView
-    private lateinit var recBtn: ImageView
-    private lateinit var endBtn: ImageView
+    // Control orbit: a full-screen overlay window, alive only while open.
+    private var stage: FrameLayout? = null
+    private var stageLp: WindowManager.LayoutParams? = null
+    private var closing = false
     private var endArmed = false
-    private var panelClosedAt = 0L
+    private lateinit var hub: ImageView
+    private lateinit var capsule: LinearLayout
+    private lateinit var capsuleText: TextView
+    private lateinit var liveDot: View
+    private var pulse: ObjectAnimator? = null
+    private lateinit var mic: Orb
+    private lateinit var screenOrb: Orb
+    private lateinit var rec: Orb
+    private lateinit var end: Orb
+    private lateinit var app: Orb
+    private var hubX = 0f; private var hubY = 0f
 
     private val tick = object : Runnable {
         override fun run() {
@@ -62,12 +82,12 @@ class BubbleService : Service() {
             handler.postDelayed(this, 1000)
         }
     }
-    private val panelTick = object : Runnable {
-        override fun run() { refreshPanel(); handler.postDelayed(this, 1000) }
+    private val orbitTick = object : Runnable {
+        override fun run() { refreshOrbit(); handler.postDelayed(this, 1000) }
     }
     private val tuck = Runnable { if (edgeHide) tuckAway() }
-    private val closePanel = Runnable { hidePanel() }
-    private val disarmEnd = Runnable { endArmed = false; refreshPanel() }
+    private val autoClose = Runnable { closeOrbit() }
+    private val disarmEnd = Runnable { endArmed = false; refreshOrbit() }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -82,7 +102,7 @@ class BubbleService : Service() {
             scaleX = DEFAULT_ICON_ZOOM; scaleY = DEFAULT_ICON_ZOOM
         }
         timer = TextView(this).apply {
-            setTextColor(0xFFFFFFFF.toInt()); textSize = 12f; visibility = View.GONE
+            setTextColor(Color.WHITE); textSize = 12f; visibility = View.GONE
             gravity = Gravity.CENTER; text = "0:00:00"
         }
         root = FrameLayout(this).apply {
@@ -160,7 +180,7 @@ class BubbleService : Service() {
         scheduleTuck()
     }
 
-    private fun scheduleTuck() { handler.removeCallbacks(tuck); if (panel == null) handler.postDelayed(tuck, IDLE_MS) }
+    private fun scheduleTuck() { handler.removeCallbacks(tuck); if (stage == null) handler.postDelayed(tuck, IDLE_MS) }
 
     /** Slides the bubble behind its edge, leaving a slim handle on screen. */
     private fun tuckAway() {
@@ -202,109 +222,236 @@ class BubbleService : Service() {
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = (e.rawX - downX).toInt(); val dy = (e.rawY - downY).toInt()
-                    if (!moved && (abs(dx) > dp(6) || abs(dy) > dp(6))) { moved = true; hidePanel() }
+                    if (abs(dx) > dp(6) || abs(dy) > dp(6)) moved = true
                     if (moved) { lp.x = startX + dx; lp.y = startY + dy; wm.updateViewLayout(root, lp) }   // 1:1 with the finger
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> when {
                     moved || tucked -> snap(animate = true)        // dropped, or tapped the handle: pop back out
-                    panel != null -> hidePanel()
-                    // The outside-touch that just closed the panel is this same tap; don't reopen it.
-                    SystemClock.uptimeMillis() - panelClosedAt > 300 -> showPanel()
+                    else -> openOrbit()
                 }
             }
             true
         }
     }
 
-    /* ---------- control panel ---------- */
+    /* ---------- control orbit ---------- */
+
+    /** One glass orb with a caption; paints itself idle / active (red glow) / disabled. */
+    @Suppress("ClickableViewAccessibility")
+    private inner class Orb(res: Int, private val onTap: () -> Unit) {
+        val disc = ImageView(this@BubbleService).apply {
+            setImageResource(res)
+            val pad = dp(15); setPadding(pad, pad, pad, pad)
+            elevation = dp(10).toFloat(); outlineProvider = ViewOutlineProvider.BACKGROUND
+        }
+        val caption = TextView(this@BubbleService).apply {
+            textSize = 11f; setTextColor(0xE6FFFFFF.toInt()); gravity = Gravity.CENTER
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setShadowLayer(dp(3).toFloat(), 0f, 0f, 0x99000000.toInt())
+        }
+        val view = LinearLayout(this@BubbleService).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; clipChildren = false
+            addView(disc, LinearLayout.LayoutParams(dp(ORB), dp(ORB)))
+            addView(caption, LinearLayout.LayoutParams(dp(76), ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
+        }
+        var enabled = true
+
+        init {
+            disc.setOnTouchListener { v, e ->
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> v.animate().scaleX(0.84f).scaleY(0.84f).setDuration(90)
+                        .setInterpolator(DecelerateInterpolator()).start()
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        v.animate().scaleX(1f).scaleY(1f).setDuration(320).setInterpolator(OvershootInterpolator(3f)).start()
+                        val inside = e.x in 0f..v.width.toFloat() && e.y in 0f..v.height.toFloat()
+                        if (e.actionMasked == MotionEvent.ACTION_UP && inside && enabled) {
+                            v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                            onTap(); refreshOrbit()
+                            handler.removeCallbacks(autoClose); handler.postDelayed(autoClose, ORBIT_MS)
+                        }
+                    }
+                }
+                true
+            }
+        }
+
+        fun paint(label: String, on: Boolean, enabled: Boolean, res: Int? = null) {
+            this.enabled = enabled
+            res?.let { disc.setImageResource(it) }
+            caption.text = label; disc.contentDescription = label
+            disc.background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                if (on) intArrayOf(0xFFFF6A45.toInt(), 0xFFFF2D55.toInt())       // ember to Apple pink-red
+                else intArrayOf(0xF2414145.toInt(), 0xF21C1C1E.toInt())).apply {  // dark glass, lit from above
+                shape = GradientDrawable.OVAL
+                setStroke(dp(1), if (on) 0x66FFFFFF else 0x30FFFFFF)
+            }
+            if (Build.VERSION.SDK_INT >= 28) {
+                disc.outlineSpotShadowColor = if (on) RED else Color.BLACK
+                disc.outlineAmbientShadowColor = if (on) RED else Color.BLACK
+            }
+            disc.alpha = if (enabled) 1f else 0.38f
+        }
+    }
 
     @Suppress("ClickableViewAccessibility")
-    private fun showPanel() {
+    private fun openOrbit() {
+        if (stage != null) return
         handler.removeCallbacks(tuck)
-        status = TextView(this).apply {
-            setTextColor(0xFFFFFFFF.toInt()); textSize = 13f; setPadding(dp(4), 0, dp(4), dp(10))
-        }
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        fun button(res: Int, desc: String, onTap: () -> Unit) = ImageView(this).apply {
-            setImageResource(res); contentDescription = desc
-            setPadding(dp(11), dp(11), dp(11), dp(11))
-            setOnClickListener { onTap(); refreshPanel(); handler.removeCallbacks(closePanel); handler.postDelayed(closePanel, PANEL_MS) }
-            row.addView(this, LinearLayout.LayoutParams(dp(46), dp(46)).apply { marginEnd = dp(8) })
-        }
-        micBtn = button(R.drawable.ic_mic, "Mute microphone") { StreamService.toggleMic() }
-        screenBtn = button(R.drawable.ic_eye_off, "Hide screen from viewers") { StreamService.toggleScreen() }
-        recBtn = button(R.drawable.ic_record, "Record to phone") { StreamService.toggleRecord() }
-        endBtn = button(R.drawable.ic_stop, "End stream") {
-            if (StreamService.controls() == null) return@button
+        root.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+
+        mic = Orb(R.drawable.ic_mic) { StreamService.toggleMic() }
+        screenOrb = Orb(R.drawable.ic_eye_off) { StreamService.toggleScreen() }
+        rec = Orb(R.drawable.ic_record) { StreamService.toggleRecord() }
+        end = Orb(R.drawable.ic_stop) {
             if (endArmed) startService(Intent(this, StreamService::class.java).setAction(StreamService.ACTION_STOP))
             else { endArmed = true; handler.postDelayed(disarmEnd, 3000) }
         }
-        button(R.drawable.ic_home, "Open Angra Streaming") {
+        app = Orb(R.drawable.ic_home) {
             startActivity(Intent(this, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
-            hidePanel()
-        }.apply { (layoutParams as LinearLayout.LayoutParams).marginEnd = 0 }
+            closeOrbit()
+        }
+        hub = ImageView(this).apply {
+            setImageResource(R.drawable.ic_close)
+            val pad = dp(17); setPadding(pad, pad, pad, pad)
+            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFFFF8A50.toInt(), ACCENT))
+                .apply { shape = GradientDrawable.OVAL }
+            elevation = dp(14).toFloat(); outlineProvider = ViewOutlineProvider.BACKGROUND
+            if (Build.VERSION.SDK_INT >= 28) { outlineSpotShadowColor = ACCENT; outlineAmbientShadowColor = ACCENT }
+            contentDescription = "Close controls"
+            setOnClickListener { closeOrbit() }
+        }
+        liveDot = View(this).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(RED) } }
+        capsuleText = TextView(this).apply {
+            textSize = 13f; setTextColor(Color.WHITE)
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            fontFeatureSettings = "tnum"                    // the timer doesn't jitter
+        }
+        capsule = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(9), dp(16), dp(9))
+            elevation = dp(8).toFloat()
+            addView(liveDot, LinearLayout.LayoutParams(dp(8), dp(8)).apply { marginEnd = dp(9) })
+            addView(capsuleText)
+        }
 
-        val p = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(12), dp(14), dp(14))
-            background = GradientDrawable().apply { cornerRadius = dp(24).toFloat(); setColor(0xF2161618.toInt()) }
-            addView(status); addView(row)
-            setOnTouchListener { _, e -> if (e.action == MotionEvent.ACTION_OUTSIDE) hidePanel(); false }
+        val scrim = ColorDrawable(0x73000000).apply { alpha = 0 }
+        val st = FrameLayout(this).apply {
+            background = scrim; clipChildren = false
+            setOnClickListener { closeOrbit() }             // tap anywhere off the orbs folds them back
+            listOf(mic, screenOrb, rec, end, app).forEach { addView(it.view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)) }
+            addView(capsule, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(hub, FrameLayout.LayoutParams(size, size))
+            visibility = View.INVISIBLE                     // revealed once laid out, so nothing flashes at 0,0
         }
-        panel = p
-        refreshPanel()
+        stage = st; closing = false; endArmed = false
+        refreshOrbit()
 
-        // Beside the bubble, towards the middle of the screen; above/below it when parked on the top/bottom edge.
-        p.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
-        val mw = p.measuredWidth; val mh = p.measuredHeight; val gap = dp(8)
-        val (w, h) = screen()
-        var mx = if (lp.x + size / 2 < w / 2) lp.x + size + gap else lp.x - mw - gap
-        var my = lp.y + (size - mh) / 2
-        if (mx < 0 || mx + mw > w) {
-            mx = lp.x + size / 2 - mw / 2
-            my = if (lp.y + size / 2 < h / 2) lp.y + size + gap else lp.y - mh - gap
+        val slp = WindowManager.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, overlayType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT).apply { gravity = Gravity.TOP or Gravity.START }
+        // Real frosted backdrop on Android 12+ (when the device has cross-window blur on).
+        val blur = Build.VERSION.SDK_INT >= 31 && wm.isCrossWindowBlurEnabled
+        if (blur) slp.flags = slp.flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
+        stageLp = slp
+        runCatching { wm.addView(st, slp) }.onFailure { stage = null; return }
+
+        st.post {
+            val so = IntArray(2).also { st.getLocationOnScreen(it) }
+            val bo = IntArray(2).also { root.getLocationOnScreen(it) }
+            hubX = (bo[0] - so[0] + size / 2).toFloat(); hubY = (bo[1] - so[1] + size / 2).toFloat()
+            root.visibility = View.INVISIBLE                // the hub stands in for the bubble while open
+            val w = st.width.toFloat(); val h = st.height.toFloat()
+            val r = dp(RADIUS).toFloat()
+            val centres = orbitCentres(hubX, hubY, w, h, 5, r, SPAN_DEG)
+            val m = dp(40).toFloat()
+            listOf(mic, screenOrb, rec, end, app).forEachIndexed { i, o ->
+                o.view.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+                val (cx, cy) = centres[i]
+                val tx = cx.coerceIn(m, w - m) - o.view.measuredWidth / 2f
+                val ty = cy.coerceIn(m, h - m - dp(20)) - dp(ORB) / 2f
+                o.view.translationX = hubX - o.view.measuredWidth / 2f; o.view.translationY = hubY - dp(ORB) / 2f
+                o.view.scaleX = 0.3f; o.view.scaleY = 0.3f; o.view.alpha = 0f
+                o.view.animate().translationX(tx).translationY(ty).scaleX(1f).scaleY(1f).alpha(1f)
+                    .setStartDelay(i * 32L).setDuration(420).setInterpolator(OvershootInterpolator(1.3f)).start()
+            }
+            // Status capsule floats beyond the arc's middle, in the direction the orbit opens.
+            capsule.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+            val cw = capsule.measuredWidth.toFloat(); val ch = capsule.measuredHeight.toFloat()
+            val a = atan2(h / 2 - hubY, w / 2 - hubX)
+            val reach = r + dp(ORB) / 2f + dp(22) + abs(cos(a)) * cw / 2 + abs(sin(a)) * ch / 2
+            capsule.translationX = (hubX + cos(a) * reach - cw / 2).coerceIn(dp(12).toFloat(), w - cw - dp(12))
+            capsule.translationY = (hubY + sin(a) * reach - ch / 2).coerceIn(dp(12).toFloat(), h - ch - dp(12))
+            capsule.alpha = 0f; capsule.scaleX = 0.85f; capsule.scaleY = 0.85f
+            capsule.animate().alpha(1f).scaleX(1f).scaleY(1f).setStartDelay(140).setDuration(360)
+                .setInterpolator(OvershootInterpolator(1.2f)).start()
+            hub.translationX = hubX - size / 2f; hub.translationY = hubY - size / 2f
+            hub.rotation = -90f
+            hub.animate().rotation(0f).setDuration(380).setInterpolator(OvershootInterpolator(1.6f)).start()
+            ObjectAnimator.ofInt(scrim, "alpha", 0, 255).setDuration(220).start()
+            if (blur) ValueAnimator.ofInt(0, dp(26)).apply {
+                duration = 260
+                addUpdateListener { slp.blurBehindRadius = it.animatedValue as Int; runCatching { wm.updateViewLayout(st, slp) } }
+                start()
+            }
+            st.visibility = View.VISIBLE
         }
-        val plp = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
-            overlayType(),
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
-            PixelFormat.TRANSLUCENT).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = mx.coerceIn(gap, maxOf(gap, w - mw - gap)); y = my.coerceIn(gap, maxOf(gap, h - mh - gap))
-        }
-        runCatching { wm.addView(p, plp) }
-        handler.post(panelTick)
-        handler.postDelayed(closePanel, PANEL_MS)
+        handler.post(orbitTick)
+        handler.postDelayed(autoClose, ORBIT_MS)
     }
 
-    private fun hidePanel() {
-        val p = panel ?: return
-        panel = null; endArmed = false; panelClosedAt = SystemClock.uptimeMillis()
-        handler.removeCallbacks(panelTick); handler.removeCallbacks(closePanel); handler.removeCallbacks(disarmEnd)
-        runCatching { wm.removeView(p) }
-        scheduleTuck()
+    /** Folds the orbs back into the bubble, then removes the overlay. */
+    private fun closeOrbit() {
+        val st = stage ?: return
+        if (closing) return
+        closing = true
+        handler.removeCallbacks(orbitTick); handler.removeCallbacks(autoClose); handler.removeCallbacks(disarmEnd)
+        pulse?.cancel(); pulse = null
+        listOf(mic, screenOrb, rec, end, app).forEach { o ->
+            o.view.animate().translationX(hubX - o.view.width / 2f).translationY(hubY - dp(ORB) / 2f)
+                .scaleX(0.3f).scaleY(0.3f).alpha(0f).setStartDelay(0).setDuration(170)
+                .setInterpolator(AccelerateInterpolator()).start()
+        }
+        capsule.animate().alpha(0f).scaleX(0.9f).scaleY(0.9f).setStartDelay(0).setDuration(140).start()
+        hub.animate().rotation(-90f).setDuration(170).start()
+        (st.background as? ColorDrawable)?.let { ObjectAnimator.ofInt(it, "alpha", it.alpha, 0).setDuration(170).start() }
+        handler.postDelayed({
+            runCatching { wm.removeView(st) }
+            stage = null; stageLp = null; closing = false; endArmed = false
+            root.visibility = View.VISIBLE
+            scheduleTuck()
+        }, 190)
     }
 
-    /** Live state into the panel; in preview the controls are shown but dimmed. */
-    private fun refreshPanel() {
-        if (panel == null) return
+    /** Live state into the orbit; in preview the controls are shown but dimmed. */
+    private fun refreshOrbit() {
+        if (stage == null) return
         val c = StreamService.controls()
-        status.text = when {
-            c == null -> "Preview · controls work once you're live"
-            endArmed -> "Tap ■ again to end the stream"
-            else -> "● LIVE  ${clock()} · %.1f Mbps".format(StreamService.lastBitrate.value / 1_000_000f)
-        }
-        fun paint(v: ImageView, on: Boolean, enabled: Boolean) {
-            v.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (on) RED else 0x33FFFFFF) }
-            v.alpha = if (enabled) 1f else 0.35f
-        }
         val live = c != null
-        micBtn.setImageResource(if (c?.micMuted == true) R.drawable.ic_mic_off else R.drawable.ic_mic)
-        micBtn.contentDescription = if (c?.micMuted == true) "Unmute microphone" else "Mute microphone"
-        paint(micBtn, c?.micMuted == true, live)
-        paint(screenBtn, c?.screenHidden == true, live)
-        paint(recBtn, c?.recording == true, live)
-        paint(endBtn, endArmed, live)
+        mic.paint(if (c?.micMuted == true) "Unmute" else "Mute", c?.micMuted == true, live,
+            if (c?.micMuted == true) R.drawable.ic_mic_off else R.drawable.ic_mic)
+        screenOrb.paint(if (c?.screenHidden == true) "Show screen" else "Hide screen", c?.screenHidden == true, live)
+        rec.paint(if (c?.recording == true) "Stop rec" else "Record", c?.recording == true, live)
+        end.paint(if (endArmed) "Tap to end" else "End", endArmed, live)
+        app.paint("Open app", false, true)
+
+        capsuleText.text = when {
+            !live -> "Preview  ·  go live to use controls"
+            endArmed -> "Tap End again to stop streaming"
+            else -> "LIVE  ${clock()}  ·  %.1f Mbps".format(StreamService.lastBitrate.value / 1_000_000f)
+        }
+        capsule.background = GradientDrawable().apply {
+            cornerRadius = dp(100).toFloat()
+            setColor(if (endArmed) 0xF2FF3B30.toInt() else 0xE61C1C1E.toInt())
+            setStroke(dp(1), 0x30FFFFFF)
+        }
+        (liveDot.background as GradientDrawable).setColor(if (live && !endArmed) RED else 0xFF8E8E93.toInt())
+        if (live && !endArmed && pulse == null) {
+            pulse = ObjectAnimator.ofFloat(liveDot, "alpha", 1f, 0.25f).apply {
+                duration = 750; repeatMode = ValueAnimator.REVERSE; repeatCount = ValueAnimator.INFINITE; start()
+            }
+        } else if ((!live || endArmed) && pulse != null) { pulse?.cancel(); pulse = null; liveDot.alpha = 1f }
     }
 
     private fun overlayType() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
@@ -316,7 +463,8 @@ class BubbleService : Service() {
         else Point().also { @Suppress("DEPRECATION") wm.defaultDisplay.getRealSize(it) }.let { it.x to it.y }
 
     override fun onDestroy() {
-        hidePanel()
+        stage?.let { runCatching { wm.removeView(it) } }; stage = null
+        pulse?.cancel()
         handler.removeCallbacksAndMessages(null); anim?.cancel()
         runCatching { wm.removeView(root) }
         super.onDestroy()
@@ -331,10 +479,26 @@ class BubbleService : Service() {
         const val EXTRA_IMAGE = "image"
         const val EXTRA_EDGE_HIDE = "edgeHide"
         private const val IDLE_MS = 2500L
-        private const val PANEL_MS = 6000L               // panel closes itself after this long untouched
+        private const val ORBIT_MS = 8000L               // orbit folds itself after this long untouched
         private const val DEFAULT_ICON_ZOOM = 1.75f
+        private const val ORB = 54                       // orb diameter, dp
+        private const val RADIUS = 118                   // orbit radius, dp
+        private const val SPAN_DEG = 150.0
         private const val ACCENT = 0xFFF2542D.toInt()
         private const val RED = 0xFFFF3B30.toInt()
+
+        /**
+         * Centres of n orbs spread evenly over an arc of [spanDeg] around (cx, cy), opening toward the middle
+         * of a w×h screen, so a bubble on any edge or corner fans its controls inward.
+         */
+        fun orbitCentres(cx: Float, cy: Float, w: Float, h: Float, n: Int, r: Float, spanDeg: Double): List<Pair<Float, Float>> {
+            val mid = atan2((h / 2 - cy).toDouble(), (w / 2 - cx).toDouble())
+            val span = Math.toRadians(spanDeg)
+            return List(n) { i ->
+                val a = mid - span / 2 + if (n == 1) span / 2 else span * i / (n - 1)
+                (cx + r * cos(a)).toFloat() to (cy + r * sin(a)).toFloat()
+            }
+        }
 
         @Volatile var previewing = false
             private set
