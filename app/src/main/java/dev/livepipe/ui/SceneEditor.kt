@@ -97,10 +97,8 @@ fun SceneEditor(
     }
     val overlayAspect = overlayBmp?.let { it.width.toFloat() / it.height } ?: 1f
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            runCatching { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-            d = d.copy(overlayUri = uri.toString()); layer = OVERLAY
-        }
+        // Copy into the app's own storage: the channel keeps working even if the original is moved or deleted.
+        if (uri != null) copyOverlay(ctx, uri, d.id)?.let { d = d.copy(overlayUri = it); layer = OVERLAY }
     }
     val view = Scene.screenView(sourceAspect, canvasAspect, d.screenFit, d.screenZoom, d.screenPanX, d.screenPanY)
 
@@ -142,9 +140,10 @@ fun SceneEditor(
                             val dx = pan.x / px; val dy = pan.y / py
                             val c = cur
                             d = when (curLayer) {
-                                OVERLAY -> c.copy(overlayX = (c.overlayX + dx).coerceIn(0f, 1f),
-                                    overlayY = (c.overlayY + dy).coerceIn(0f, 1f),
-                                    overlayW = (c.overlayW * zoom).coerceIn(0.05f, 1f))
+                                // Overlays may hang past the frame; only what's inside the frame is streamed.
+                                OVERLAY -> c.copy(overlayX = (c.overlayX + dx).coerceIn(-0.5f, 1.5f),
+                                    overlayY = (c.overlayY + dy).coerceIn(-0.5f, 1.5f),
+                                    overlayW = (c.overlayW * zoom).coerceIn(0.05f, 2f))
                                 FACECAM -> {
                                     fcScale = (fcScale * zoom).coerceIn(10f, 60f)
                                     c.copy(facecamX = (c.facecamX + dx).coerceIn(0f, 1f), facecamY = (c.facecamY + dy).coerceIn(0f, 1f),
@@ -175,7 +174,7 @@ fun SceneEditor(
                 if (overlayBmp != null) {
                     val oh = Scene.overlayH(d.overlayW, overlayAspect, canvasAspect)
                     LayerBox(d.overlayX - d.overlayW / 2, d.overlayY - oh / 2, d.overlayW, oh, w, h, layer == OVERLAY) {
-                        Image(overlayBmp, null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
+                        OverlayPreview(d.overlayUri, overlayBmp)
                     }
                 }
                 if (d.facecam) {
@@ -223,7 +222,7 @@ fun SceneEditor(
                 }
                 if (d.overlayUri.isNotBlank()) {
                     SectionHeader("Size · ${(d.overlayW * 100).roundToInt()}% of width")
-                    IosSlider(d.overlayW, { d = d.copy(overlayW = it) }, valueRange = 0.05f..1f)
+                    IosSlider(d.overlayW, { d = d.copy(overlayW = it) }, valueRange = 0.05f..2f)
                     InsetCard {
                         RowItem("Full-frame overlay") {
                             Text("Fill canvas", color = Accent, modifier = Modifier.iosTap {
@@ -232,7 +231,7 @@ fun SceneEditor(
                         }
                     }
                 }
-                Footer("PNG, JPG, WebP or animated GIF. Transparent PNG frames work as full-screen overlays.")
+                Footer("PNG, JPG, WebP or animated GIF, kept at its own shape (never stretched). Drag it past the edges if you like — only what's inside the frame is streamed. The image is copied into the app.")
             }
             else -> {
                 InsetCard { RowItem("Show facecam") { IosSwitch(d.facecam, { d = d.copy(facecam = it); layer = FACECAM }) } }
@@ -300,4 +299,39 @@ private fun MixerRow(icon: Int, label: String, value: Float, enabled: Boolean, o
             IosSlider(value, { if (enabled) onChange(it) }, valueRange = 0f..1.5f)
         }
     }
+}
+
+/** Overlay files live in the app (files/overlays/<channelId>_<time>.<ext>), never at the picked location. */
+fun copyOverlay(ctx: android.content.Context, src: Uri, channelId: String): String? = runCatching {
+    val ext = when (ctx.contentResolver.getType(src)) {
+        "image/gif" -> "gif"; "image/png" -> "png"; "image/webp" -> "webp"; else -> "jpg"
+    }
+    val dir = java.io.File(ctx.filesDir, "overlays").apply { mkdirs() }
+    val out = java.io.File(dir, "${channelId}_${System.currentTimeMillis()}.$ext")
+    ctx.contentResolver.openInputStream(src)?.use { i -> out.outputStream().use { i.copyTo(it) } } ?: return null
+    Uri.fromFile(out).toString()
+}.getOrNull()
+
+/** Removes a channel's overlay copies (on delete). */
+fun deleteOverlays(ctx: android.content.Context, channelId: String) {
+    java.io.File(ctx.filesDir, "overlays").listFiles { f -> f.name.startsWith("${channelId}_") }?.forEach { it.delete() }
+}
+
+/** Overlay preview; animated GIF/WebP play here just like on stream (API 28+), others show still. */
+@Composable
+private fun OverlayPreview(uri: String, still: androidx.compose.ui.graphics.ImageBitmap) {
+    val ctx = LocalContext.current
+    val animated = remember(uri) {
+        if (android.os.Build.VERSION.SDK_INT < 28) null else runCatching {
+            android.graphics.ImageDecoder.decodeDrawable(android.graphics.ImageDecoder.createSource(ctx.contentResolver, Uri.parse(uri)))
+                .takeIf { it is android.graphics.drawable.AnimatedImageDrawable }
+        }.getOrNull()
+    }
+    if (animated == null) Image(still, null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
+    else androidx.compose.ui.viewinterop.AndroidView({ c ->
+        android.widget.ImageView(c).apply {
+            scaleType = android.widget.ImageView.ScaleType.FIT_XY        // the box already has the image's shape
+            setImageDrawable(animated); (animated as android.graphics.drawable.AnimatedImageDrawable).start()
+        }
+    }, Modifier.fillMaxSize())
 }

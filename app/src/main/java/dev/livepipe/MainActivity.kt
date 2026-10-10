@@ -104,11 +104,22 @@ class MainActivity : ComponentActivity() {
                     onToggleStream = ::toggleStream,
                     onPickBubbleImage = { pickImage.launch("image/*") },
                     micDevices = mics.value,
+                    onPreviewBubble = ::previewBubble,
                 )
                 cropSource.value?.let { BubbleCropper(it, onCancel = { cropSource.value = null }, onDone = ::saveBubble) }
                 }
             }
         }
+    }
+
+    /** Bubble preview before going live; needs the draw-over-apps permission. */
+    private fun previewBubble(on: Boolean) {
+        if (!on) { BubbleService.stop(this); return }
+        if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+            return
+        }
+        BubbleService.preview(this, prefs.value)
     }
 
     override fun onDestroy() {

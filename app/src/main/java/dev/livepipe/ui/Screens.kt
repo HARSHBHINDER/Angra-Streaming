@@ -1,6 +1,10 @@
 package dev.livepipe.ui
 
 import android.content.Intent
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -284,6 +288,7 @@ fun App(
     onToggleStream: () -> Unit,
     onPickBubbleImage: () -> Unit,
     micDevices: List<Pair<Int, String>>,
+    onPreviewBubble: (Boolean) -> Unit = {},
 ) {
     var tab by remember { mutableStateOf(0) }
     var sceneFor by remember { mutableStateOf<Destination?>(null) }   // scene editor opened from the Stream tab
@@ -332,7 +337,7 @@ fun App(
                     prefs, onToggleStream, onPrefs,
                     onScene = { sceneFor = destinations.firstOrNull { it.id == activeId } ?: destinations.firstOrNull() })
                 1 -> DestinationsScreen(destinations, activeId, ::saveDest, prefs, onPrefs)
-                else -> SettingsScreen(prefs, onPickBubbleImage, micDevices, onPrefs)
+                else -> SettingsScreen(prefs, onPickBubbleImage, micDevices, onPrefs, onPreviewBubble)
             }
         }
     }
@@ -612,6 +617,7 @@ fun DestinationsScreen(
     onPrefs: (Prefs) -> Unit,
 ) {
     var editing by remember { mutableStateOf<Destination?>(null) }
+    val ctx = LocalContext.current
     var adding by remember { mutableStateOf(false) }
 
     if (adding || editing != null) {
@@ -627,6 +633,7 @@ fun DestinationsScreen(
                 adding = false; editing = null
             },
             onDelete = { d ->
+                deleteOverlays(ctx, d.id)
                 val list = destinations.filterNot { it.id == d.id }
                 save(list, if (activeId == d.id) list.firstOrNull()?.id else activeId)
                 editing = null
@@ -635,37 +642,164 @@ fun DestinationsScreen(
         return
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    // Display order: pinned first, each group in saved order. Positions (1..N) refer to this order.
+    val ordered = destinations.filter { it.pinned } + destinations.filterNot { it.pinned }
+    var selecting by remember { mutableStateOf(false) }
+    var selected by remember { mutableStateOf(setOf<String>()) }
+    var moving by remember { mutableStateOf<Destination?>(null) }
+    var confirmDelete by remember { mutableStateOf(false) }
+
+    Box(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState(), enabled = !selecting)) {
         Row(Modifier.fillMaxWidth().padding(end = 16.dp), verticalAlignment = Alignment.Bottom) {
             LargeTitle("Channels", Modifier.weight(1f))
-            Icon(Icons.Filled.Add, "Add channel", tint = Accent,
+            if (destinations.isNotEmpty()) Text(if (selecting) "Done" else "Select", color = Accent,
+                fontWeight = if (selecting) FontWeight.SemiBold else FontWeight.Normal,
+                modifier = Modifier.padding(bottom = 12.dp, end = 14.dp).iosTap { selecting = !selecting; selected = emptySet() })
+            if (!selecting) Icon(Icons.Filled.Add, "Add channel", tint = Accent,
                 modifier = Modifier.padding(bottom = 8.dp).size(30.dp).iosTap { adding = true })
         }
         if (destinations.isEmpty()) {
-            Footer("No channels yet. Tap + to add YouTube, Twitch, Kick, Facebook or a custom RTMP URL.")
+            Footer("No channels yet. Tap + to add YouTube, Twitch, Kick, Facebook or a custom RTMP URL. " +
+                "Make as many profiles as you like, e.g. one YouTube channel per game.")
         } else {
-            SectionHeader("Tap to make active")
+            SectionHeader(if (selecting) "Tap, or drag down the list to select" else "Tap to make active · tap the number to move")
+            val rowH = 64.dp
+            val stepPx = with(LocalDensity.current) { rowH.toPx() + 0.5.dp.toPx() }
             InsetCard {
-                destinations.forEachIndexed { i, d ->
-                    if (i > 0) Hairline()
-                    Row(Modifier.fillMaxWidth().iosTap { save(destinations, d.id) }
-                        .heightIn(min = 60.dp).padding(horizontal = 16.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        // iOS selection mark: blue check on the active row, empty slot on the others.
-                        Text(if (d.id == activeId) "✓" else "", color = Accent, fontSize = 17.sp,
-                            fontWeight = FontWeight.SemiBold, modifier = Modifier.width(24.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(d.name, fontWeight = FontWeight.SemiBold)
-                            Text("${d.height}p · ${d.fps} fps · ${d.videoBitrate / 1000} kbps" +
-                                (if (d.hevc) " · HEVC" else "") + (if (d.delaySeconds > 0) " · ${d.delaySeconds}s delay" else ""),
-                                fontSize = 13.sp, color = Ios.secondaryLabel)
+                Column(Modifier.pointerInput(selecting, ordered) {
+                    if (!selecting) return@pointerInput
+                    // Photos-style sweep: the first row touched decides select vs deselect for the whole drag.
+                    var add = true
+                    fun mark(y: Float) {
+                        val id = ordered[(y / stepPx).toInt().coerceIn(0, ordered.lastIndex)].id
+                        selected = if (add) selected + id else selected - id
+                    }
+                    detectDragGestures(onDragStart = { o ->
+                        add = ordered[(o.y / stepPx).toInt().coerceIn(0, ordered.lastIndex)].id !in selected
+                        mark(o.y)
+                    }) { change, _ -> mark(change.position.y) }
+                }) {
+                    ordered.forEachIndexed { i, d ->
+                        if (i > 0) Hairline()
+                        val isSel = d.id in selected
+                        Row(Modifier.fillMaxWidth().height(rowH)
+                            .iosTap { if (selecting) selected = if (isSel) selected - d.id else selected + d.id else save(destinations, d.id) }
+                            .padding(horizontal = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            if (selecting) {
+                                Box(Modifier.size(24.dp).background(if (isSel) Accent else Color.Transparent, CircleShape)
+                                    .border(1.5.dp, if (isSel) Accent else Ios.separator, CircleShape), contentAlignment = Alignment.Center) {
+                                    if (isSel) Text("✓", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                }
+                            } else {
+                                // Position badge: tap to open the number wheel and move this channel anywhere.
+                                Box(Modifier.size(width = 36.dp, height = 26.dp).background(Ios.segmentTrack, RoundedCornerShape(7.dp))
+                                    .iosTap { moving = d }, contentAlignment = Alignment.Center) {
+                                    Text("${i + 1}", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (d.pinned) Text("★ ", color = Accent, fontSize = 14.sp)
+                                    Text(d.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                Text(platformOf(d.url) + " · ${d.height}p · ${d.fps} fps · ${d.videoBitrate / 1000} kbps",
+                                    fontSize = 13.sp, color = Ios.secondaryLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            if (!selecting) {
+                                if (d.id == activeId) Text("✓", color = Accent, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(horizontal = 8.dp))
+                                Text("Edit", color = Accent, modifier = Modifier.iosTap { editing = d }.padding(start = 8.dp))
+                            }
                         }
-                        Text("Edit", color = Accent, modifier = Modifier.iosTap { editing = d }.padding(start = 12.dp))
                     }
                 }
             }
         }
-        Spacer(Modifier.height(32.dp))
+        Spacer(Modifier.height(if (selecting) 110.dp else 32.dp))
+    }
+
+    // Selection actions, iOS-style toolbar along the bottom.
+    if (selecting) Row(
+        Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(MaterialTheme.colorScheme.surface)
+            .padding(horizontal = 24.dp, vertical = 16.dp),
+        horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val any = selected.isNotEmpty()
+        val tint = if (any) Accent else Ios.secondaryLabel
+        Text("Pin", color = tint, modifier = Modifier.iosTap(any) {
+            save(destinations.map { if (it.id in selected) it.copy(pinned = true) else it }, activeId); selected = emptySet() })
+        Text("Unpin", color = tint, modifier = Modifier.iosTap(any) {
+            save(destinations.map { if (it.id in selected) it.copy(pinned = false) else it }, activeId); selected = emptySet() })
+        Text(if (any) "Delete (${selected.size})" else "Delete", color = if (any) AppleRed else Ios.secondaryLabel,
+            fontWeight = FontWeight.SemiBold, modifier = Modifier.iosTap(any) { confirmDelete = true })
+    }
+
+    if (confirmDelete) androidx.compose.material3.AlertDialog(
+        onDismissRequest = { confirmDelete = false },
+        title = { Text("Delete ${selected.size} channel${if (selected.size == 1) "" else "s"}?") },
+        text = { Text("Their settings, scenes and overlay copies are removed from the app. This can't be undone.") },
+        confirmButton = { Text("Delete", color = AppleRed, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(12.dp).iosTap {
+            selected.forEach { deleteOverlays(ctx, it) }
+            val left = destinations.filterNot { it.id in selected }
+            save(left, if (activeId in selected) left.firstOrNull()?.id else activeId)
+            selected = emptySet(); confirmDelete = false; selecting = left.isNotEmpty()
+        }) },
+        dismissButton = { Text("Cancel", color = Accent, modifier = Modifier.padding(12.dp).iosTap { confirmDelete = false }) },
+    )
+
+    moving?.let { m ->
+        PositionWheel(m.name, ordered.indexOf(m) + 1, ordered.size, onCancel = { moving = null }) { pos ->
+            // Re-insert at the chosen spot. Landing among the pinned channels pins it; below them unpins it.
+            val rest = ordered.filterNot { it.id == m.id }
+            val pinnedBefore = rest.count { it.pinned }
+            val moved = m.copy(pinned = pos - 1 < pinnedBefore || (m.pinned && pos - 1 == pinnedBefore))
+            save(rest.toMutableList().apply { add(pos - 1, moved) }, activeId)
+            moving = null
+        }
+    }
+    }
+}
+
+/** iOS-style number wheel: scroll the digits; the one in the middle is the new position. */
+@Composable
+private fun PositionWheel(name: String, current: Int, count: Int, onCancel: () -> Unit, onMove: (Int) -> Unit) {
+    val itemH = 44.dp
+    val state = androidx.compose.foundation.lazy.rememberLazyListState(initialFirstVisibleItemIndex = current - 1)
+    val fling = androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior(state)
+    // Content padding of two rows means the first visible item sits in the middle slot.
+    val centre by remember { androidx.compose.runtime.derivedStateOf {
+        val half = (state.layoutInfo.visibleItemsInfo.firstOrNull()?.size ?: 0) / 2
+        state.firstVisibleItemIndex + (if (state.firstVisibleItemScrollOffset > half) 1 else 0) + 1
+    } }
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)).iosTap { onCancel() }, contentAlignment = Alignment.BottomCenter) {
+        Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface, RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
+            .pointerInput(Unit) { detectTapGestures { } }.padding(bottom = 24.dp)) {
+            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Cancel", color = Accent, modifier = Modifier.iosTap { onCancel() })
+                Text("Move “$name”", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.weight(1f).padding(horizontal = 12.dp))
+                Text("Move", color = Accent, fontWeight = FontWeight.SemiBold, modifier = Modifier.iosTap { onMove(centre.coerceIn(1, count)) })
+            }
+            Box(Modifier.fillMaxWidth().height(itemH * 5), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(itemH).background(Ios.segmentTrack, RoundedCornerShape(10.dp)))
+                androidx.compose.foundation.lazy.LazyColumn(state = state, flingBehavior = fling,
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = itemH * 2),
+                    horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
+                    items(count) { i ->
+                        val n = i + 1
+                        Box(Modifier.height(itemH).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            Text("$n", fontSize = if (n == centre) 24.sp else 19.sp,
+                                fontWeight = if (n == centre) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (n == centre) MaterialTheme.colorScheme.onSurface else Ios.secondaryLabel)
+                        }
+                    }
+                }
+            }
+            Footer("Scroll to the new number. Moving above the last pinned channel pins it.")
+        }
     }
 }
 
@@ -695,7 +829,7 @@ fun DestinationEditor(
     var delay by remember { mutableStateOf(existing?.delaySeconds ?: 0) }
     var delayUnitMin by remember { mutableStateOf((existing?.delaySeconds ?: 0) >= 60) }
     // Scene layout (screen/overlay/facecam) is edited in SceneEditor; the form only carries it through.
-    var scene by remember { mutableStateOf(existing ?: Destination("", "", "", "")) }
+    var scene by remember { mutableStateOf(existing ?: Destination(UUID.randomUUID().toString(), "", "", "")) }
     var showScene by remember { mutableStateOf(false) }
     if (showScene) {
         SceneEditor(scene.copy(width = res.w, height = res.h, portrait = portrait), prefs, onPrefs,
@@ -712,7 +846,7 @@ fun DestinationEditor(
             Text("Save", color = if (valid) Accent else Ios.secondaryLabel, fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.iosTap(enabled = valid) {
                     onSave(scene.copy(
-                        id = existing?.id ?: UUID.randomUUID().toString(), name = name.trim(), url = url.trim(), key = key.trim(),
+                        id = scene.id, name = name.trim(), url = url.trim(), key = key.trim(),
                         width = res.w, height = res.h, fps = fps, videoBitrate = vBitrate.toInt(), audioBitrate = aBitrate,
                         sampleRate = sample, stereo = stereo, hevc = hevc, keyframeSeconds = keyframe, portrait = portrait,
                         delaySeconds = delay))
@@ -813,7 +947,9 @@ fun SettingsScreen(
     onPickImage: () -> Unit,
     micDevices: List<Pair<Int, String>>,
     onPrefs: (Prefs) -> Unit,
+    onPreviewBubble: (Boolean) -> Unit,
 ) {
+    var previewing by remember { mutableStateOf(dev.livepipe.BubbleService.previewing) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         LargeTitle("Settings")
 
@@ -822,6 +958,14 @@ fun SettingsScreen(
         InsetCard {
             RowItem("Show bubble while live") {
                 IosSwitch(prefs.bubbleEnabled, { onPrefs(prefs.copy(bubbleEnabled = it)) })
+            }
+            Hairline()
+            RowItem("Preview bubble now") {
+                IosSwitch(previewing, { previewing = it; onPreviewBubble(it) })
+            }
+            Hairline()
+            RowItem("Hide to edge bar when idle") {
+                IosSwitch(prefs.bubbleEdgeHide, { onPrefs(prefs.copy(bubbleEdgeHide = it)) })
             }
             Hairline()
             RowItem("Bubble shows") {
@@ -841,7 +985,7 @@ fun SettingsScreen(
         SectionHeader("Bubble transparency · ${(prefs.bubbleTransparency * 100).toInt()}%")
         IosSlider(prefs.bubbleTransparency, { onPrefs(prefs.copy(bubbleTransparency = it)) },
             valueRange = 0f..Prefs.BUBBLE_MAX_TRANSPARENCY)
-        Footer("The system recording indicator stays visible regardless of this slider.")
+        Footer("Preview places the bubble before you go live: drag it anywhere, it snaps to the nearest edge. Edge bar: an idle bubble tucks into a slim handle; tap it to pop out. On Android 14+, share \"A single app\" when going live and the bubble stays out of the stream. The system recording indicator always stays visible.")
 
         SectionHeader("Audio source")
         Chips(listOf(Prefs.AUDIO_MIC, Prefs.AUDIO_GAME, Prefs.AUDIO_MIX), prefs.audioSource,

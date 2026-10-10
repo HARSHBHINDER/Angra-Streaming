@@ -160,7 +160,7 @@ class StreamService : Service(), ConnectChecker {
         if (uri.isBlank()) return
         val u = android.net.Uri.parse(uri)
         runCatching {
-            overlay = if (contentResolver.getType(u)?.contains("gif") == true) {
+            overlay = if (contentResolver.getType(u)?.contains("gif") == true || u.path.orEmpty().endsWith(".gif")) {
                 val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 contentResolver.openInputStream(u)?.use { android.graphics.BitmapFactory.decodeStream(it, null, o) }
                 overlayAspect = o.outWidth.toFloat() / o.outHeight.coerceAtLeast(1)

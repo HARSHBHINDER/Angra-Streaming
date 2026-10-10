@@ -38,6 +38,7 @@ data class Destination(
     val overlayW: Float = 0.25f,            // overlay width as a fraction of canvas width (height follows the image)
     val facecamX: Float = 0.17f,            // facecam centre, 0..1
     val facecamY: Float = 0.81f,
+    val pinned: Boolean = false,            // pinned channels list first, in their own order
 ) {
     /** Full endpoint RootEncoder streams to. Guards the slash between url and key. */
     fun endpoint(): String = if (key.isBlank()) url else url.trimEnd('/') + "/" + key
@@ -50,7 +51,7 @@ data class Destination(
         put("dly", delaySeconds); put("fc", facecam); put("fcs", facecamScale); put("fcc", facecamCorner)
         put("sf", screenFit); put("sz", screenZoom.toDouble()); put("spx", screenPanX.toDouble()); put("spy", screenPanY.toDouble())
         put("ox", overlayX.toDouble()); put("oy", overlayY.toDouble()); put("ow", overlayW.toDouble())
-        put("fcx", facecamX.toDouble()); put("fcy", facecamY.toDouble())
+        put("fcx", facecamX.toDouble()); put("fcy", facecamY.toDouble()); put("pin", pinned)
     }
 
     companion object {
@@ -71,6 +72,7 @@ data class Destination(
             // Channels saved before the scene editor only had a corner: start the facecam there.
             facecamX = o.optDouble("fcx", cornerCentre(o.optInt("fcc", 2), o.optInt("fcs", 30), true)).toFloat(),
             facecamY = o.optDouble("fcy", cornerCentre(o.optInt("fcc", 2), o.optInt("fcs", 30), false)).toFloat(),
+            pinned = o.optBoolean("pin", false),
         )
 
         private fun cornerCentre(corner: Int, scalePct: Int, x: Boolean): Double {
@@ -97,6 +99,9 @@ data class Prefs(
     val micDeviceId: Int = -1,                   // AudioDeviceInfo.id for the chosen mic; -1 = system default/auto
     val micVolume: Float = 1f,                   // audio mixer, 0..1.5 (0 = muted)
     val gameVolume: Float = 1f,
+    val bubbleX: Float = 0f,                     // bubble position as screen fractions (snapped to an edge)
+    val bubbleY: Float = 0.3f,
+    val bubbleEdgeHide: Boolean = true,          // tuck into a slim edge handle when idle; tap the handle to pop out
 ) {
     companion object {
         const val BUBBLE_MAX_TRANSPARENCY = 0.95f
@@ -147,6 +152,8 @@ class Store(context: Context) {
                 adaptiveBitrate = o.optBoolean("ab", true),
                 micDeviceId = o.optInt("mic", -1),
                 micVolume = o.optDouble("mv", 1.0).toFloat(), gameVolume = o.optDouble("gv", 1.0).toFloat(),
+                bubbleX = o.optDouble("bx", 0.0).toFloat(), bubbleY = o.optDouble("by", 0.3).toFloat(),
+                bubbleEdgeHide = o.optBoolean("beh", true),
             )
         }
         set(p) {
@@ -155,6 +162,7 @@ class Store(context: Context) {
                 put("bimg", p.bubbleImageUri); put("rws", p.recordWhileStreaming)
                 put("as", p.audioSource); put("ab", p.adaptiveBitrate)
                 put("mic", p.micDeviceId); put("mv", p.micVolume.toDouble()); put("gv", p.gameVolume.toDouble())
+                put("bx", p.bubbleX.toDouble()); put("by", p.bubbleY.toDouble()); put("beh", p.bubbleEdgeHide)
             }
             prefs.edit().putString("prefs", o.toString()).apply()
         }
