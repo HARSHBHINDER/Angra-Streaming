@@ -59,8 +59,21 @@ class MainActivity : ComponentActivity() {
     // Mic list refreshes as headsets/USB mics come and go.
     private val mics = mutableStateOf(listOf<Pair<Int, String>>())
     private val micCallback = object : AudioDeviceCallback() {
-        override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>?) { mics.value = micDevices() }
-        override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>?) { mics.value = micDevices() }
+        override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>?) = refreshMics()
+        override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>?) = refreshMics()
+    }
+
+    /** A newly plugged/paired mic is picked automatically; if the chosen one goes away, back to the phone mic. */
+    private fun refreshMics() {
+        val old = mics.value.map { it.first }.toSet()
+        val now = micDevices()
+        mics.value = now
+        val p = prefs.value
+        val fresh = now.lastOrNull { it.first !in old }
+        when {
+            fresh != null -> setPrefs(p.copy(micDeviceId = fresh.first))
+            p.micDeviceId >= 0 && now.none { it.first == p.micDeviceId } -> setPrefs(p.copy(micDeviceId = -1))
+        }
     }
     /** Input devices for the mic picker: (AudioDeviceInfo.id, label); -1 = system default. */
     private fun micDevices(): List<Pair<Int, String>> {

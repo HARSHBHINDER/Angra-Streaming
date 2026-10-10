@@ -62,16 +62,18 @@ class BubbleService : Service() {
         icon = ImageView(this).apply {
             setImageResource(R.mipmap.ic_launcher_foreground)
             scaleType = ImageView.ScaleType.CENTER_CROP
+            // The launcher art sits on a dark tile inside adaptive-icon padding; zoom so the tile fills the circle.
+            scaleX = DEFAULT_ICON_ZOOM; scaleY = DEFAULT_ICON_ZOOM
         }
         timer = TextView(this).apply {
             setTextColor(0xFFFFFFFF.toInt()); textSize = 12f; visibility = View.GONE
             gravity = Gravity.CENTER; text = "0:00:00"
         }
         root = FrameLayout(this).apply {
-            background = GradientDrawable().apply {
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0xFF111111.toInt()) }
+            foreground = GradientDrawable().apply {                 // ember ring drawn over the image
                 shape = GradientDrawable.OVAL
-                setColor(0xE61C1C1E.toInt())
-                setStroke(dp(2), 0xFFF2542D.toInt())   // ember ring, matches the app accent
+                setStroke(dp(2), 0xFFF2542D.toInt())
             }
             clipToOutline = true
             addView(icon, FrameLayout.LayoutParams(size, size))
@@ -87,6 +89,10 @@ class BubbleService : Service() {
         val (w, h) = screen()
         lp.x = (p.bubbleX * (w - size)).toInt(); lp.y = (p.bubbleY * (h - size)).toInt()
         root.setOnTouchListener(dragAndTap())
+        // Parked on an edge the bubble sits in the back-gesture zone; claim its bounds so a grab drags it.
+        if (Build.VERSION.SDK_INT >= 29) root.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+            v.systemGestureExclusionRects = listOf(android.graphics.Rect(0, 0, v.width, v.height))
+        }
         wm.addView(root, lp)
     }
 
@@ -100,6 +106,7 @@ class BubbleService : Service() {
         intent?.getStringExtra(EXTRA_IMAGE)?.takeIf { it.isNotBlank() }?.let { uri ->
             runCatching {
                 contentResolver.openInputStream(Uri.parse(uri))?.use { icon.setImageBitmap(android.graphics.BitmapFactory.decodeStream(it)) }
+                icon.scaleX = 1f; icon.scaleY = 1f                  // user crops are already a full circle
             }
         }
         render()
@@ -211,6 +218,7 @@ class BubbleService : Service() {
         const val EXTRA_IMAGE = "image"
         const val EXTRA_EDGE_HIDE = "edgeHide"
         private const val IDLE_MS = 2500L
+        private const val DEFAULT_ICON_ZOOM = 1.75f
 
         @Volatile var previewing = false
             private set

@@ -266,6 +266,44 @@ val FPS = listOf(30, 60)
 val AUDIO_BITRATES = listOf(96_000, 128_000, 160_000, 192_000, 256_000)
 val SAMPLE_RATES = listOf(44_100, 48_000)
 
+/**
+ * What this phone can really stream: sizes and frame rates its hardware encoder accepts, never bigger than
+ * the screen (capture is not upscaled; no enhancers). Older phones simply get fewer options.
+ */
+class DeviceCaps(ctx: android.content.Context) {
+    private val encoders = android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.filter { it.isEncoder }
+    private val screenShort = run {
+        val wm = ctx.getSystemService(android.view.WindowManager::class.java)
+        if (android.os.Build.VERSION.SDK_INT >= 30) wm.maximumWindowMetrics.bounds.let { minOf(it.width(), it.height()) }
+        else android.graphics.Point().also { @Suppress("DEPRECATION") wm.defaultDisplay.getRealSize(it) }.let { minOf(it.x, it.y) }
+    }
+
+    private fun hardware(c: android.media.MediaCodecInfo) = if (android.os.Build.VERSION.SDK_INT >= 29) c.isHardwareAccelerated
+        else !c.name.startsWith("OMX.google.") && !c.name.startsWith("c2.android.")
+
+    // H.264 falls back to a software encoder if a phone has no hardware one; HEVC must be hardware.
+    private fun video(hevc: Boolean): List<android.media.MediaCodecInfo.VideoCapabilities> {
+        val mime = if (hevc) "video/hevc" else "video/avc"
+        val all = encoders.filter { c -> c.supportedTypes.any { it.equals(mime, true) } }
+        return all.filter(::hardware).ifEmpty { if (hevc) emptyList() else all }.map { it.getCapabilitiesForType(mime).videoCapabilities }
+    }
+    private val avc = video(false)
+    private val hevcCaps = video(true)
+
+    val hevc get() = hevcCaps.isNotEmpty()
+
+    fun supports(r: Res, fps: Int, hevc: Boolean, portrait: Boolean): Boolean {
+        val (w, h) = if (portrait) r.h to r.w else r.w to r.h
+        // Encoders pad to their block size (1080 is coded as 1088), so check the aligned size.
+        fun up(v: Int, a: Int) = (v + a - 1) / a * a
+        return r.h <= screenShort && (if (hevc) hevcCaps else avc).any {
+            it.areSizeAndRateSupported(up(w, it.widthAlignment), up(h, it.heightAlignment), fps.toDouble())
+        }
+    }
+
+    fun maxBitrate(hevc: Boolean) = (if (hevc) hevcCaps else avc).maxOfOrNull { it.bitrateRange.upper } ?: 12_000_000
+}
+
 /** Platform presets — prefill the ingest URL; key is always pasted by the user. */
 data class Platform(val name: String, val url: String)
 val PLATFORMS = listOf(
@@ -830,6 +868,8 @@ fun DestinationEditor(
     var delayUnitMin by remember { mutableStateOf((existing?.delaySeconds ?: 0) >= 60) }
     // Scene layout (screen/overlay/facecam) is edited in SceneEditor; the form only carries it through.
     var scene by remember { mutableStateOf(existing ?: Destination(UUID.randomUUID().toString(), "", "", "")) }
+    val ctx = LocalContext.current
+    val caps = remember { DeviceCaps(ctx) }
     var showScene by remember { mutableStateOf(false) }
     if (showScene) {
         SceneEditor(scene.copy(width = res.w, height = res.h, portrait = portrait), prefs, onPrefs,
@@ -876,20 +916,34 @@ fun DestinationEditor(
             Hairline()
             FieldRow("Stream key", key, { key = it }, "Paste from dashboard", secure = true)
         }
+        // Only offer what this phone can actually encode; out-of-range picks snap to the nearest valid one.
+        val codecs = if (caps.hevc) listOf(false, true) else listOf(false)
+        val resList = RESOLUTIONS.filter { caps.supports(it, 30, hevc, portrait) }.ifEmpty { RESOLUTIONS.take(1) }
+        val fpsList = FPS.filter { caps.supports(res, it, hevc, portrait) }.ifEmpty { FPS.take(1) }
+        val maxRate = caps.maxBitrate(hevc).coerceIn(1_000_000, 12_000_000)
+        LaunchedEffect(resList, fpsList, codecs, maxRate) {
+            if (hevc !in codecs) hevc = false
+            if (res !in resList) res = resList.lastOrNull { it.h <= res.h } ?: resList.first()
+            if (fps !in fpsList) fps = fpsList.last()
+            vBitrate = vBitrate.coerceAtMost(maxRate.toFloat())
+        }
         SectionHeader("Resolution")
-        Chips(RESOLUTIONS, res, { it.toString() }) { res = it }
+        Chips(resList, res, { it.toString() }) { res = it }
         SectionHeader("Frame rate")
-        Chips(FPS, fps, { "$it fps" }) { fps = it }
+        Chips(fpsList, fps, { "$it fps" }) { fps = it }
         SectionHeader("Orientation")
         Chips(listOf(false, true), portrait, { if (it) "Portrait" else "Landscape" }) { portrait = it }
         SectionHeader("Codec")
-        Chips(listOf(false, true), hevc, { if (it) "HEVC (H.265)" else "H.264" }) { hevc = it }
+        Chips(codecs, hevc, { if (it) "HEVC (H.265)" else "H.264" }) { hevc = it }
         SectionHeader("Keyframe interval")
         Chips(listOf(1, 2, 4), keyframe, { "${it}s" }) { keyframe = it }
         SectionHeader("Video bitrate · ${vBitrate.toInt() / 1000} kbps · CBR")
-        // steps=111 snaps the 800k..12M range to 100-kbps stops.
+        // Snaps 800k..device max to 100-kbps stops.
         IosSlider(vBitrate, { vBitrate = (it / 100_000f).toInt() * 100_000f },
-            valueRange = 800_000f..12_000_000f, steps = 111)
+            valueRange = 800_000f..maxRate.toFloat(), steps = ((maxRate - 800_000) / 100_000 - 1).coerceAtLeast(0))
+        Footer("Options are limited to what this phone can stream: up to ${resList.last()} at " +
+            "${FPS.filter { caps.supports(resList.last(), it, hevc, portrait) }.maxOrNull() ?: 30} fps" +
+            (if (caps.hevc) "" else ", H.264 only") + ".")
         SectionHeader("Audio bitrate")
         Chips(AUDIO_BITRATES, aBitrate, { "${it / 1000}k" }) { aBitrate = it }
         SectionHeader("Sample rate")
