@@ -499,6 +499,8 @@ fun StreamScreen(
             }
         }
 
+        BreakCard(prefs, onPrefs, live)
+
         // Channel switcher: pick where to go live without leaving the tab (locked while live).
         Row(Modifier.fillMaxWidth().padding(end = 32.dp), verticalAlignment = Alignment.Bottom) {
             Box(Modifier.weight(1f)) { SectionHeader("Channels") }
@@ -620,6 +622,74 @@ fun StatTile(icon: Int, tint: Color, value: String, caption: String, modifier: M
     Text(value, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.5).sp, style = Tnum,
         maxLines = 1, overflow = TextOverflow.Ellipsis)
     Text(caption, fontSize = 13.sp, color = Ios.secondaryLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+}
+
+/**
+ * Break screen: covers the stream while it keeps running (audio continues). Plain black with no name or
+ * branding, or the user's own image / GIF fitted without stretching. The image is copied into the app.
+ */
+@Composable
+private fun BreakCard(prefs: Prefs, onPrefs: (Prefs) -> Unit, live: Boolean) {
+    val ctx = LocalContext.current
+    val onBreak by StreamService.onBreak.collectAsState()
+    fun setImage(uri: String) {
+        val old = prefs.breakImageUri
+        if (old.isNotBlank() && old != uri) android.net.Uri.parse(old).path?.let { java.io.File(it).delete() }
+        onPrefs(prefs.copy(breakImageUri = uri))
+        if (onBreak) StreamService.setBreak(true)          // swap it on air straight away
+    }
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) copyOverlay(ctx, uri, "break")?.let(::setImage)
+    }
+    val thumb = remember(prefs.breakImageUri) {
+        prefs.breakImageUri.takeIf { it.isNotBlank() }?.let { u ->
+            runCatching {
+                ctx.contentResolver.openInputStream(android.net.Uri.parse(u))?.use {
+                    android.graphics.BitmapFactory.decodeStream(it, null, android.graphics.BitmapFactory.Options().apply { inSampleSize = 4 })
+                }?.asImageBitmap()
+            }.getOrNull()
+        }
+    }
+    Column(
+        Modifier.padding(horizontal = 16.dp).padding(top = 12.dp).fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(20.dp)).padding(14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(34.dp).background(if (onBreak) AppleRed else Color(0xFF2C2C2E), RoundedCornerShape(9.dp)),
+                contentAlignment = Alignment.Center) {
+                Icon(painterResource(R.drawable.ic_pause), null, tint = Color.White, modifier = Modifier.size(18.dp))
+            }
+            Spacer(Modifier.size(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Break screen", fontWeight = FontWeight.SemiBold)
+                Text(when {
+                    onBreak -> "On air: viewers see your break screen"
+                    live -> "Cover the stream without ending it"
+                    else -> "Ready for when you go live"
+                }, fontSize = 13.sp, color = Ios.secondaryLabel)
+            }
+            Text(if (onBreak) "End" else "Start", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .background(if (onBreak) AppleRed else if (live) Accent else Ios.secondaryLabel.copy(alpha = 0.35f), RoundedCornerShape(50))
+                    .iosTap(live) { StreamService.setBreak(!onBreak) }
+                    .padding(horizontal = 18.dp, vertical = 7.dp))
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // What viewers will see, at stream shape.
+            Box(Modifier.width(104.dp).aspectRatio(16f / 9).clip(RoundedCornerShape(8.dp)).background(Color.Black)
+                .border(0.5.dp, Ios.separator, RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+                thumb?.let { Image(it, null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize()) }
+            }
+            Spacer(Modifier.size(12.dp))
+            Column(Modifier.weight(1f)) {
+                Chips(listOf(false, true), prefs.breakImageUri.isNotBlank(), { if (it) "My image" else "Black" },
+                    Modifier.fillMaxWidth()) { custom -> if (custom) pick.launch("image/*") else setImage("") }
+                if (prefs.breakImageUri.isNotBlank()) Text("Change image", color = Accent, fontSize = 14.sp,
+                    modifier = Modifier.padding(top = 8.dp).iosTap { pick.launch("image/*") })
+            }
+        }
+    }
 }
 
 @Composable

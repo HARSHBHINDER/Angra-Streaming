@@ -55,6 +55,8 @@ class StreamService : Service(), ConnectChecker {
     private var overlayAspect = 1f
     private var facecamLayer: SurfaceFilterRender? = null
     private var micMuted = false                 // bubble control; keeps the mixer volume for unmute
+    private var breakLayers = listOf<BaseObjectFilterRender>()
+    private var canvasAspect = 16f / 9
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -103,7 +105,7 @@ class StreamService : Service(), ConnectChecker {
         val prefs = store.prefsBundle
         maxBitrate = dest.videoBitrate
         adaptive = prefs.adaptiveBitrate
-        destId = dest.id; this.audio = audio
+        destId = dest.id; this.audio = audio; canvasAspect = dest.canvasAspect()
         // Layer order = filter order: screen crop first, then overlay, then facecam on top.
         crop = CropFilterRender().also { s.getGlInterface().addFilter(it) }
         loadOverlay(s, dest.overlayUri)
@@ -140,6 +142,7 @@ class StreamService : Service(), ConnectChecker {
         if (live === this) live = null
         stream = null; projection = null; bitrateAdapter = null
         audio = null; crop = null; overlay = null; facecamLayer = null; destId = null; micMuted = false
+        breakLayers = emptyList(); onBreak.value = false
         state.value = State.IDLE; lastBitrate.value = 0L; liveSince.value = 0L
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -153,21 +156,50 @@ class StreamService : Service(), ConnectChecker {
 
     /** Overlay layer: static image (PNG/JPG/WebP) or animated GIF; placed by [applyScene]. */
     private fun loadOverlay(s: GenericStream, uri: String) {
-        if (uri.isBlank()) return
+        imageLayer(uri)?.let { (f, aspect) -> overlay = f; overlayAspect = aspect; s.getGlInterface().addFilter(f) }
+    }
+
+    /** Overlay / break-screen layer: animated GIF, or any still the phone decodes (downsampled to ~1920 px). */
+    private fun imageLayer(uri: String): Pair<BaseObjectFilterRender, Float>? {
+        if (uri.isBlank()) return null
         val u = android.net.Uri.parse(uri)
-        runCatching {
-            overlay = if (contentResolver.getType(u)?.contains("gif") == true || u.path.orEmpty().endsWith(".gif")) {
-                val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                contentResolver.openInputStream(u)?.use { android.graphics.BitmapFactory.decodeStream(it, null, o) }
-                overlayAspect = o.outWidth.toFloat() / o.outHeight.coerceAtLeast(1)
-                GifFilterRender().apply { contentResolver.openInputStream(u)?.use { setGif(it) } }
+        return runCatching {
+            val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            contentResolver.openInputStream(u)?.use { android.graphics.BitmapFactory.decodeStream(it, null, o) }
+            if (contentResolver.getType(u)?.contains("gif") == true || u.path.orEmpty().endsWith(".gif")) {
+                GifFilterRender().apply { contentResolver.openInputStream(u)?.use { setGif(it) } } to
+                    o.outWidth.toFloat() / o.outHeight.coerceAtLeast(1)
             } else {
-                val bmp = contentResolver.openInputStream(u)?.use { android.graphics.BitmapFactory.decodeStream(it) } ?: return
-                overlayAspect = bmp.width.toFloat() / bmp.height
-                ImageFilterRender().apply { setImage(bmp) }
+                var sample = 1
+                while (maxOf(o.outWidth, o.outHeight) / (sample * 2) >= 1920) sample *= 2
+                val bmp = contentResolver.openInputStream(u)?.use {
+                    android.graphics.BitmapFactory.decodeStream(it, null, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+                } ?: return null
+                ImageFilterRender().apply { setImage(bmp) } to bmp.width.toFloat() / bmp.height
             }
-            s.getGlInterface().addFilter(overlay!!)
+        }.getOrNull()
+    }
+
+    /**
+     * Break screen over everything (stream keeps running, audio keeps going): plain black with no name or
+     * branding, or the user's image fitted on black, never stretched.
+     */
+    private fun applyBreak(on: Boolean) {
+        val gl = stream?.getGlInterface() ?: return
+        breakLayers.forEach { gl.removeFilter(it) }
+        breakLayers = emptyList()
+        onBreak.value = on
+        if (!on) return
+        val black = ImageFilterRender().apply {
+            setImage(android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888)
+                .apply { eraseColor(android.graphics.Color.BLACK) })
         }
+        gl.addFilter(black); black.setScale(100f, 100f); black.setPosition(0f, 0f)
+        breakLayers = listOf(black)
+        val (img, aspect) = imageLayer(Store(this).prefsBundle.breakImageUri) ?: return
+        val (w, h) = if (aspect > canvasAspect) 100f to 100f * canvasAspect / aspect else 100f * aspect / canvasAspect to 100f
+        gl.addFilter(img); img.setScale(w, h); img.setPosition((100 - w) / 2, (100 - h) / 2)
+        breakLayers = listOf(black, img)
     }
 
     /** Facecam layer: front camera into a surface the GL pipeline composites; placed by [applyScene]. */
@@ -268,16 +300,21 @@ class StreamService : Service(), ConnectChecker {
         fun updateVolumes(p: Prefs) { live?.applyVolumes(p) }
 
         /** Bubble controls. All no-ops when nothing is live. */
-        data class Controls(val micMuted: Boolean, val screenHidden: Boolean, val recording: Boolean)
+        data class Controls(val micMuted: Boolean, val onBreak: Boolean, val recording: Boolean)
 
         fun controls(): Controls? = live?.let { svc ->
-            svc.stream?.let { Controls(svc.micMuted, it.getGlInterface().isVideoMuted, it.isRecording) }
+            svc.stream?.let { Controls(svc.micMuted, onBreak.value, it.isRecording) }
         }
+
+        /** True while the break screen is on air; the Stream tab and bubble reflect it. */
+        val onBreak = MutableStateFlow(false)
+
+        /** Break screen on/off; calling it while on reloads a changed break image. */
+        fun setBreak(on: Boolean) { live?.applyBreak(on) }
 
         fun toggleMic() { live?.run { micMuted = !micMuted; applyVolumes(Store(this).prefsBundle) } }
 
-        /** Privacy: viewers get a black frame (e.g. while typing a password); audio keeps going. */
-        fun toggleScreen() { live?.stream?.getGlInterface()?.run { if (isVideoMuted) unMuteVideo() else muteVideo() } }
+        fun toggleBreak() = setBreak(!onBreak.value)
 
         fun toggleRecord() {
             live?.run { stream?.let { if (it.isRecording) it.stopRecord() else runCatching { it.startRecord(newRecordingPath()) {} } } }

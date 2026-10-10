@@ -289,7 +289,7 @@ class BubbleService : Service() {
                 disc.outlineSpotShadowColor = if (on) RED else Color.BLACK
                 disc.outlineAmbientShadowColor = if (on) RED else Color.BLACK
             }
-            disc.alpha = if (enabled) 1f else 0.38f
+            disc.alpha = if (enabled) 1f else 0.55f
         }
     }
 
@@ -300,7 +300,7 @@ class BubbleService : Service() {
         root.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
 
         mic = Orb(R.drawable.ic_mic) { StreamService.toggleMic() }
-        screenOrb = Orb(R.drawable.ic_eye_off) { StreamService.toggleScreen() }
+        screenOrb = Orb(R.drawable.ic_pause) { StreamService.toggleBreak() }
         rec = Orb(R.drawable.ic_record) { StreamService.toggleRecord() }
         end = Orb(R.drawable.ic_stop) {
             if (endArmed) startService(Intent(this, StreamService::class.java).setAction(StreamService.ACTION_STOP))
@@ -376,13 +376,15 @@ class BubbleService : Service() {
                 o.view.animate().translationX(tx).translationY(ty).scaleX(1f).scaleY(1f).alpha(1f)
                     .setStartDelay(i * 32L).setDuration(420).setInterpolator(OvershootInterpolator(1.3f)).start()
             }
-            // Status capsule floats beyond the arc's middle, in the direction the orbit opens.
+            // Status capsule floats just above the arc (below it when there's no room), centred over the orbit.
             capsule.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
             val cw = capsule.measuredWidth.toFloat(); val ch = capsule.measuredHeight.toFloat()
             val a = atan2(h / 2 - hubY, w / 2 - hubX)
-            val reach = r + dp(ORB) / 2f + dp(22) + abs(cos(a)) * cw / 2 + abs(sin(a)) * ch / 2
-            capsule.translationX = (hubX + cos(a) * reach - cw / 2).coerceIn(dp(12).toFloat(), w - cw - dp(12))
-            capsule.translationY = (hubY + sin(a) * reach - ch / 2).coerceIn(dp(12).toFloat(), h - ch - dp(12))
+            val top = centres.minOf { it.second } - dp(ORB) / 2f
+            val bottom = centres.maxOf { it.second } + dp(ORB) / 2f + dp(22)      // + caption
+            val gap = dp(16)
+            capsule.translationX = (hubX + cos(a) * r / 2 - cw / 2).coerceIn(dp(12).toFloat(), w - cw - dp(12))
+            capsule.translationY = if (top - gap - ch >= dp(40)) top - gap - ch else (bottom + gap).coerceAtMost(h - ch - dp(12))
             capsule.alpha = 0f; capsule.scaleX = 0.85f; capsule.scaleY = 0.85f
             capsule.animate().alpha(1f).scaleX(1f).scaleY(1f).setStartDelay(140).setDuration(360)
                 .setInterpolator(OvershootInterpolator(1.2f)).start()
@@ -431,7 +433,7 @@ class BubbleService : Service() {
         val live = c != null
         mic.paint(if (c?.micMuted == true) "Unmute" else "Mute", c?.micMuted == true, live,
             if (c?.micMuted == true) R.drawable.ic_mic_off else R.drawable.ic_mic)
-        screenOrb.paint(if (c?.screenHidden == true) "Show screen" else "Hide screen", c?.screenHidden == true, live)
+        screenOrb.paint(if (c?.onBreak == true) "End break" else "Break", c?.onBreak == true, live)
         rec.paint(if (c?.recording == true) "Stop rec" else "Record", c?.recording == true, live)
         end.paint(if (endArmed) "Tap to end" else "End", endArmed, live)
         app.paint("Open app", false, true)
@@ -439,6 +441,7 @@ class BubbleService : Service() {
         capsuleText.text = when {
             !live -> "Preview  ·  go live to use controls"
             endArmed -> "Tap End again to stop streaming"
+            c.onBreak -> "ON BREAK  ${clock()}  ·  viewers see your break screen"
             else -> "LIVE  ${clock()}  ·  %.1f Mbps".format(StreamService.lastBitrate.value / 1_000_000f)
         }
         capsule.background = GradientDrawable().apply {

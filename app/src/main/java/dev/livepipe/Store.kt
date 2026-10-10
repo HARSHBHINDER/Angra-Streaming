@@ -101,6 +101,7 @@ data class Prefs(
     val gameVolume: Float = 1f,
     val bubbleX: Float = 0f,                     // bubble position as screen fractions (snapped to an edge)
     val bubbleY: Float = 0.3f,
+    val breakImageUri: String = "",              // break screen image (copy in app storage); empty = plain black
     val bubbleEdgeHide: Boolean = true,          // tuck into a slim edge handle when idle; tap the handle to pop out
 ) {
     companion object {
@@ -154,6 +155,7 @@ class Store(context: Context) {
                 micVolume = o.optDouble("mv", 1.0).toFloat(), gameVolume = o.optDouble("gv", 1.0).toFloat(),
                 bubbleX = o.optDouble("bx", 0.0).toFloat(), bubbleY = o.optDouble("by", 0.3).toFloat(),
                 bubbleEdgeHide = o.optBoolean("beh", true),
+                breakImageUri = o.optString("brk", ""),
             )
         }
         set(p) {
@@ -162,7 +164,7 @@ class Store(context: Context) {
                 put("bimg", p.bubbleImageUri); put("rws", p.recordWhileStreaming)
                 put("as", p.audioSource); put("ab", p.adaptiveBitrate)
                 put("mic", p.micDeviceId); put("mv", p.micVolume.toDouble()); put("gv", p.gameVolume.toDouble())
-                put("bx", p.bubbleX.toDouble()); put("by", p.bubbleY.toDouble()); put("beh", p.bubbleEdgeHide)
+                put("bx", p.bubbleX.toDouble()); put("by", p.bubbleY.toDouble()); put("beh", p.bubbleEdgeHide); put("brk", p.breakImageUri)
             }
             prefs.edit().putString("prefs", o.toString()).apply()
         }
