@@ -54,17 +54,13 @@ class StreamService : Service(), ConnectChecker {
     private var overlay: BaseObjectFilterRender? = null
     private var overlayAspect = 1f
     private var facecamLayer: SurfaceFilterRender? = null
+    private var micMuted = false                 // bubble control; keeps the mixer volume for unmute
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> { stopEverything(); return START_NOT_STICKY }
-            ACTION_BUBBLE_TAP -> { // persist the icon<->timer choice the user toggled on the bubble
-                val store = Store(this)
-                store.prefsBundle = store.prefsBundle.let { it.copy(bubbleShowsTimer = !it.bubbleShowsTimer) }
-                return START_STICKY
-            }
         }
         val consent = intent?.let { IntentCompat.getParcelableExtra(it, EXTRA_CONSENT, Intent::class.java) }
         val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
@@ -143,7 +139,7 @@ class StreamService : Service(), ConnectChecker {
         projection?.stop()
         if (live === this) live = null
         stream = null; projection = null; bitrateAdapter = null
-        audio = null; crop = null; overlay = null; facecamLayer = null; destId = null
+        audio = null; crop = null; overlay = null; facecamLayer = null; destId = null; micMuted = false
         state.value = State.IDLE; lastBitrate.value = 0L; liveSince.value = 0L
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -201,8 +197,8 @@ class StreamService : Service(), ConnectChecker {
 
     private fun applyVolumes(p: Prefs) {
         when (val a = audio) {
-            is MixAudioSource -> { a.microphoneVolume = p.micVolume; a.internalVolume = p.gameVolume }
-            is MicrophoneSource -> a.microphoneVolume = p.micVolume
+            is MixAudioSource -> { a.microphoneVolume = if (micMuted) 0f else p.micVolume; a.internalVolume = p.gameVolume }
+            is MicrophoneSource -> a.microphoneVolume = if (micMuted) 0f else p.micVolume
             is InternalAudioSource -> a.internalVolume = p.gameVolume
             else -> Unit
         }
@@ -253,7 +249,6 @@ class StreamService : Service(), ConnectChecker {
 
     companion object {
         const val ACTION_STOP = "dev.livepipe.STOP"
-        const val ACTION_BUBBLE_TAP = "dev.livepipe.BUBBLE_TAP"
         const val EXTRA_RESULT_CODE = "resultCode"
         const val EXTRA_CONSENT = "consent"
         private const val CHANNEL = "live"
@@ -271,5 +266,21 @@ class StreamService : Service(), ConnectChecker {
 
         /** Mixer changes apply instantly while live. */
         fun updateVolumes(p: Prefs) { live?.applyVolumes(p) }
+
+        /** Bubble controls. All no-ops when nothing is live. */
+        data class Controls(val micMuted: Boolean, val screenHidden: Boolean, val recording: Boolean)
+
+        fun controls(): Controls? = live?.let { svc ->
+            svc.stream?.let { Controls(svc.micMuted, it.getGlInterface().isVideoMuted, it.isRecording) }
+        }
+
+        fun toggleMic() { live?.run { micMuted = !micMuted; applyVolumes(Store(this).prefsBundle) } }
+
+        /** Privacy: viewers get a black frame (e.g. while typing a password); audio keeps going. */
+        fun toggleScreen() { live?.stream?.getGlInterface()?.run { if (isVideoMuted) unMuteVideo() else muteVideo() } }
+
+        fun toggleRecord() {
+            live?.run { stream?.let { if (it.isRecording) it.stopRecord() else runCatching { it.startRecord(newRecordingPath()) {} } } }
+        }
     }
 }
