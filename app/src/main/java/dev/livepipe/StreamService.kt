@@ -21,10 +21,11 @@ import com.pedro.encoder.input.sources.audio.InternalAudioSource
 import com.pedro.encoder.input.sources.audio.MicrophoneSource
 import com.pedro.encoder.input.sources.audio.MixAudioSource
 import com.pedro.encoder.input.sources.video.ScreenSource
+import com.pedro.encoder.input.gl.render.filters.CropFilterRender
+import com.pedro.encoder.input.gl.render.filters.`object`.BaseObjectFilterRender
 import com.pedro.encoder.input.gl.render.filters.`object`.GifFilterRender
 import com.pedro.encoder.input.gl.render.filters.`object`.ImageFilterRender
 import com.pedro.encoder.input.gl.render.filters.`object`.SurfaceFilterRender
-import com.pedro.encoder.utils.gl.TranslateTo
 import com.pedro.library.generic.GenericStream
 import com.pedro.library.util.BitrateAdapter
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,6 +47,13 @@ class StreamService : Service(), ConnectChecker {
     private var facecam: Facecam? = null
     private var maxBitrate = 0
     private var adaptive = true
+    // Scene layers kept so the editor can move them while live (OBS-style).
+    private var destId: String? = null
+    private var audio: AudioSource? = null
+    private var crop: CropFilterRender? = null
+    private var overlay: BaseObjectFilterRender? = null
+    private var overlayAspect = 1f
+    private var facecamLayer: SurfaceFilterRender? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -99,11 +107,17 @@ class StreamService : Service(), ConnectChecker {
         val prefs = store.prefsBundle
         maxBitrate = dest.videoBitrate
         adaptive = prefs.adaptiveBitrate
-        applyOverlay(s, dest.overlayUri)
+        destId = dest.id; this.audio = audio
+        // Layer order = filter order: screen crop first, then overlay, then facecam on top.
+        crop = CropFilterRender().also { s.getGlInterface().addFilter(it) }
+        loadOverlay(s, dest.overlayUri)
         if (dest.facecam && android.Manifest.permission.CAMERA.let {
                 checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED
-            }) applyFacecam(s, dest.facecamScale, dest.facecamCorner)
+            }) addFacecam(s)
+        applyScene(dest)
+        applyVolumes(prefs)
         s.startStream(dest.endpoint())
+        live = this
         // OBS-style stream delay: buffers encoded output N seconds before sending. ponytail: cheap for
         // short delays (~bitrate × seconds of RAM); long delays at high bitrate cost real memory.
         if (dest.delaySeconds > 0) runCatching { s.getStreamClient().setDelay(dest.delaySeconds * 1000L) }
@@ -127,7 +141,9 @@ class StreamService : Service(), ConnectChecker {
             release()
         }
         projection?.stop()
+        if (live === this) live = null
         stream = null; projection = null; bitrateAdapter = null
+        audio = null; crop = null; overlay = null; facecamLayer = null; destId = null
         state.value = State.IDLE; lastBitrate.value = 0L; liveSince.value = 0L
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -139,46 +155,57 @@ class StreamService : Service(), ConnectChecker {
         (getSystemService(AUDIO_SERVICE) as android.media.AudioManager)
             .getDevices(android.media.AudioManager.GET_DEVICES_INPUTS).firstOrNull { it.id == id }
 
-    /** Composite one overlay onto the stream, top-right, ~25% size. Static (PNG/JPG/WebP) via
-     *  ImageFilterRender, animated (GIF) via GifFilterRender. ponytail: one overlay per channel;
-     *  multi-layer frame stacks if real layouts are needed. */
-    private fun applyOverlay(s: GenericStream, uri: String) {
+    /** Overlay layer: static image (PNG/JPG/WebP) or animated GIF; placed by [applyScene]. */
+    private fun loadOverlay(s: GenericStream, uri: String) {
         if (uri.isBlank()) return
         val u = android.net.Uri.parse(uri)
-        val isGif = contentResolver.getType(u)?.contains("gif") == true
         runCatching {
-            if (isGif) {
-                val f = GifFilterRender()
-                contentResolver.openInputStream(u)?.use { f.setGif(it) }
-                f.setScale(25f, 25f); f.setPosition(TranslateTo.TOP_RIGHT)
-                s.getGlInterface().addFilter(f)   // addFilter so facecam can coexist
+            overlay = if (contentResolver.getType(u)?.contains("gif") == true) {
+                val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                contentResolver.openInputStream(u)?.use { android.graphics.BitmapFactory.decodeStream(it, null, o) }
+                overlayAspect = o.outWidth.toFloat() / o.outHeight.coerceAtLeast(1)
+                GifFilterRender().apply { contentResolver.openInputStream(u)?.use { setGif(it) } }
             } else {
-                val bmp = contentResolver.openInputStream(u)?.use {
-                    android.graphics.BitmapFactory.decodeStream(it)
-                } ?: return
-                val f = ImageFilterRender()
-                f.setImage(bmp); f.setScale(25f, 25f); f.setPosition(TranslateTo.TOP_RIGHT)
-                s.getGlInterface().addFilter(f)
+                val bmp = contentResolver.openInputStream(u)?.use { android.graphics.BitmapFactory.decodeStream(it) } ?: return
+                overlayAspect = bmp.width.toFloat() / bmp.height
+                ImageFilterRender().apply { setImage(bmp) }
             }
+            s.getGlInterface().addFilter(overlay!!)
         }
     }
 
-    /** Front-camera PiP at the chosen [corner], size = [scalePct]% of frame. */
-    private fun applyFacecam(s: GenericStream, scalePct: Int, corner: Int) {
-        val render = SurfaceFilterRender(object : SurfaceFilterRender.SurfaceReadyCallback {
+    /** Facecam layer: front camera into a surface the GL pipeline composites; placed by [applyScene]. */
+    private fun addFacecam(s: GenericStream) {
+        facecamLayer = SurfaceFilterRender(object : SurfaceFilterRender.SurfaceReadyCallback {
             override fun surfaceReady(surfaceTexture: android.graphics.SurfaceTexture) {
                 facecam = Facecam(applicationContext, surfaceTexture).also { it.start() }
             }
-        })
-        s.getGlInterface().addFilter(render)
-        val sc = scalePct.coerceIn(10, 60).toFloat()
-        render.setScale(sc, sc)
-        render.setPosition(when (corner) {
-            0 -> TranslateTo.TOP_LEFT
-            1 -> TranslateTo.TOP_RIGHT
-            3 -> TranslateTo.BOTTOM_RIGHT
-            else -> TranslateTo.BOTTOM_LEFT
-        })
+        }).also { s.getGlInterface().addFilter(it) }
+    }
+
+    /** Positions every layer from the channel's scene. Object filters take top-left % of the canvas. */
+    private fun applyScene(d: Destination) {
+        val c = d.screenView(this).cropPercent()
+        crop?.setCropArea(c[0], c[1], c[2], c[3])
+        overlay?.let {
+            val h = Scene.overlayH(d.overlayW, overlayAspect, d.canvasAspect())
+            it.setScale(d.overlayW * 100, h * 100)
+            it.setPosition((d.overlayX - d.overlayW / 2) * 100, (d.overlayY - h / 2) * 100)
+        }
+        facecamLayer?.let {
+            val f = d.facecamScale.coerceIn(10, 60) / 100f
+            it.setScale(f * 100, f * 100)
+            it.setPosition((d.facecamX - f / 2) * 100, (d.facecamY - f / 2) * 100)
+        }
+    }
+
+    private fun applyVolumes(p: Prefs) {
+        when (val a = audio) {
+            is MixAudioSource -> { a.microphoneVolume = p.micVolume; a.internalVolume = p.gameVolume }
+            is MicrophoneSource -> a.microphoneVolume = p.micVolume
+            is InternalAudioSource -> a.internalVolume = p.gameVolume
+            else -> Unit
+        }
     }
 
     private fun newRecordingPath(): String {
@@ -236,5 +263,13 @@ class StreamService : Service(), ConnectChecker {
         val state = MutableStateFlow(State.IDLE)
         val lastBitrate = MutableStateFlow(0L)   // last reported upload bitrate (bps) for the health meter
         val liveSince = MutableStateFlow(0L)     // elapsedRealtime when the stream started; 0 = not streaming
+
+        @Volatile private var live: StreamService? = null
+
+        /** Live scene edits (editor "Done" while streaming) move layers on air for the channel being streamed. */
+        fun updateScene(d: Destination) { live?.takeIf { it.destId == d.id }?.applyScene(d) }
+
+        /** Mixer changes apply instantly while live. */
+        fun updateVolumes(p: Prefs) { live?.applyVolumes(p) }
     }
 }

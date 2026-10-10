@@ -60,4 +60,5 @@ dependencies {
     implementation("androidx.compose.material3:material3") // bundles material-icons-core (the few icons we use)
     implementation("androidx.security:security-crypto:1.1.0-alpha06") // Keystore-backed stream-key storage
     debugImplementation("androidx.compose.ui:ui-tooling")
+    testImplementation("junit:junit:4.13.2")
 }

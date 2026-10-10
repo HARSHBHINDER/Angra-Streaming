@@ -27,7 +27,17 @@ data class Destination(
     val delaySeconds: Int = 0,              // OBS-style stream delay; applied via streamClient.setDelay()
     val facecam: Boolean = false,           // front-camera PiP composited over the screen
     val facecamScale: Int = 30,             // facecam size as % of frame (10..60)
-    val facecamCorner: Int = 2,             // 0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right
+    val facecamCorner: Int = 2,             // legacy corner (0 TL, 1 TR, 2 BL, 3 BR); only seeds facecamX/Y
+    // Scene layout (see Scene.kt). Screen: fill/fit + zoom + pan; layers: centre + size, all canvas fractions.
+    val screenFit: Boolean = false,         // false = fill the canvas (no borders), true = show the whole screen
+    val screenZoom: Float = 1f,             // extra zoom on top of fill/fit, 1..4
+    val screenPanX: Float = 0f,             // -1..1 across the pannable range
+    val screenPanY: Float = 0f,
+    val overlayX: Float = 0.82f,            // overlay centre, 0..1 of canvas width
+    val overlayY: Float = 0.18f,
+    val overlayW: Float = 0.25f,            // overlay width as a fraction of canvas width (height follows the image)
+    val facecamX: Float = 0.17f,            // facecam centre, 0..1
+    val facecamY: Float = 0.81f,
 ) {
     /** Full endpoint RootEncoder streams to. Guards the slash between url and key. */
     fun endpoint(): String = if (key.isBlank()) url else url.trimEnd('/') + "/" + key
@@ -38,6 +48,9 @@ data class Destination(
         put("vb", videoBitrate); put("ab", audioBitrate); put("sr", sampleRate); put("st", stereo)
         put("hevc", hevc); put("kf", keyframeSeconds); put("port", portrait); put("ovl", overlayUri)
         put("dly", delaySeconds); put("fc", facecam); put("fcs", facecamScale); put("fcc", facecamCorner)
+        put("sf", screenFit); put("sz", screenZoom.toDouble()); put("spx", screenPanX.toDouble()); put("spy", screenPanY.toDouble())
+        put("ox", overlayX.toDouble()); put("oy", overlayY.toDouble()); put("ow", overlayW.toDouble())
+        put("fcx", facecamX.toDouble()); put("fcy", facecamY.toDouble())
     }
 
     companion object {
@@ -51,7 +64,20 @@ data class Destination(
             delaySeconds = o.optInt("dly", 0),
             facecam = o.optBoolean("fc", false), facecamScale = o.optInt("fcs", 30),
             facecamCorner = o.optInt("fcc", 2),
+            screenFit = o.optBoolean("sf", false), screenZoom = o.optDouble("sz", 1.0).toFloat(),
+            screenPanX = o.optDouble("spx", 0.0).toFloat(), screenPanY = o.optDouble("spy", 0.0).toFloat(),
+            overlayX = o.optDouble("ox", 0.82).toFloat(), overlayY = o.optDouble("oy", 0.18).toFloat(),
+            overlayW = o.optDouble("ow", 0.25).toFloat(),
+            // Channels saved before the scene editor only had a corner: start the facecam there.
+            facecamX = o.optDouble("fcx", cornerCentre(o.optInt("fcc", 2), o.optInt("fcs", 30), true)).toFloat(),
+            facecamY = o.optDouble("fcy", cornerCentre(o.optInt("fcc", 2), o.optInt("fcs", 30), false)).toFloat(),
         )
+
+        private fun cornerCentre(corner: Int, scalePct: Int, x: Boolean): Double {
+            val half = scalePct / 200.0
+            val leftOrTop = if (x) corner == 0 || corner == 2 else corner <= 1
+            return if (leftOrTop) half else 1 - half
+        }
     }
 }
 
@@ -69,6 +95,8 @@ data class Prefs(
     val audioSource: Int = AUDIO_MIX,            // mic / game / both
     val adaptiveBitrate: Boolean = true,         // lower bitrate automatically when the network can't keep up
     val micDeviceId: Int = -1,                   // AudioDeviceInfo.id for the chosen mic; -1 = system default/auto
+    val micVolume: Float = 1f,                   // audio mixer, 0..1.5 (0 = muted)
+    val gameVolume: Float = 1f,
 ) {
     companion object {
         const val BUBBLE_MAX_TRANSPARENCY = 0.95f
@@ -118,6 +146,7 @@ class Store(context: Context) {
                 audioSource = o.optInt("as", Prefs.AUDIO_MIX),
                 adaptiveBitrate = o.optBoolean("ab", true),
                 micDeviceId = o.optInt("mic", -1),
+                micVolume = o.optDouble("mv", 1.0).toFloat(), gameVolume = o.optDouble("gv", 1.0).toFloat(),
             )
         }
         set(p) {
@@ -125,7 +154,7 @@ class Store(context: Context) {
                 put("be", p.bubbleEnabled); put("bt", p.bubbleShowsTimer); put("btr", p.bubbleTransparency.toDouble())
                 put("bimg", p.bubbleImageUri); put("rws", p.recordWhileStreaming)
                 put("as", p.audioSource); put("ab", p.adaptiveBitrate)
-                put("mic", p.micDeviceId)
+                put("mic", p.micDeviceId); put("mv", p.micVolume.toDouble()); put("gv", p.gameVolume.toDouble())
             }
             prefs.edit().putString("prefs", o.toString()).apply()
         }

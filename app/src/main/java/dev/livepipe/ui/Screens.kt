@@ -286,6 +286,7 @@ fun App(
     micDevices: List<Pair<Int, String>>,
 ) {
     var tab by remember { mutableStateOf(0) }
+    var sceneFor by remember { mutableStateOf<Destination?>(null) }   // scene editor opened from the Stream tab
     var destinations by remember { mutableStateOf(initialDestinations) }
     var activeId by remember { mutableStateOf(initialActiveId) }
 
@@ -319,10 +320,18 @@ fun App(
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {
             EmberBackdrop()
-            when (tab) {
+            val editingScene = sceneFor
+            if (editingScene != null) {
+                SceneEditor(editingScene, prefs, onPrefs, onCancel = { sceneFor = null }, onDone = { d ->
+                    saveDest(destinations.map { if (it.id == d.id) d else it }, activeId)
+                    StreamService.updateScene(d)          // live: layers move on air
+                    sceneFor = null
+                })
+            } else when (tab) {
                 0 -> StreamScreen(destinations, activeId, { saveDest(destinations, it) }, { tab = 1 },
-                    prefs, onToggleStream, onPrefs)
-                1 -> DestinationsScreen(destinations, activeId, ::saveDest)
+                    prefs, onToggleStream, onPrefs,
+                    onScene = { sceneFor = destinations.firstOrNull { it.id == activeId } ?: destinations.firstOrNull() })
+                1 -> DestinationsScreen(destinations, activeId, ::saveDest, prefs, onPrefs)
                 else -> SettingsScreen(prefs, onPickBubbleImage, micDevices, onPrefs)
             }
         }
@@ -355,7 +364,7 @@ private val Tnum = TextStyle(fontFeatureSettings = "tnum")   // fixed-width digi
 @Composable
 fun StreamScreen(
     destinations: List<Destination>, activeId: String?, onSelect: (String) -> Unit, onManage: () -> Unit,
-    prefs: Prefs, onToggle: () -> Unit, onPrefs: (Prefs) -> Unit,
+    prefs: Prefs, onToggle: () -> Unit, onPrefs: (Prefs) -> Unit, onScene: () -> Unit,
 ) {
     val active = destinations.firstOrNull { it.id == activeId } ?: destinations.firstOrNull()
     val state by StreamService.state.collectAsState()
@@ -422,6 +431,28 @@ fun StreamScreen(
             }
             QuickToggle(R.drawable.ic_signal, "Adaptive", prefs.adaptiveBitrate, AppleGreen, Modifier.weight(1f)) {
                 onPrefs(prefs.copy(adaptiveBitrate = !prefs.adaptiveBitrate))
+            }
+        }
+
+        // Scene & mixer: arrange layers on the real stream frame; works live, like OBS.
+        if (active != null) {
+            Spacer(Modifier.height(12.dp))
+            Row(
+                Modifier.padding(horizontal = 16.dp).fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(20.dp))
+                    .iosTap { onScene() }.padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(34.dp).background(EmberBrush, RoundedCornerShape(9.dp)), contentAlignment = Alignment.Center) {
+                    Icon(painterResource(R.drawable.ic_video), null, tint = Color.White, modifier = Modifier.size(18.dp))
+                }
+                Spacer(Modifier.size(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Scene & Audio Mixer", fontWeight = FontWeight.SemiBold)
+                    Text(if (busy) "Adjust layers and volume live" else sceneSummary(active),
+                        fontSize = 13.sp, color = Ios.secondaryLabel)
+                }
+                Text("›", color = Ios.secondaryLabel, fontSize = 22.sp)
             }
         }
 
@@ -565,11 +596,20 @@ fun QuickToggle(icon: Int, label: String, on: Boolean, tint: Color, modifier: Mo
 
 /* ---------- Channels tab ---------- */
 
+fun sceneSummary(d: Destination) = listOf(
+    if (d.screenFit) "Fit" else "Fill",
+    "zoom ${(d.screenZoom * 100).toInt()}%",
+    if (d.overlayUri.isBlank()) "no overlay" else "overlay",
+    if (d.facecam) "facecam" else null,
+).filterNotNull().joinToString(" · ")
+
 @Composable
 fun DestinationsScreen(
     destinations: List<Destination>,
     activeId: String?,
     save: (List<Destination>, String?) -> Unit,
+    prefs: Prefs,
+    onPrefs: (Prefs) -> Unit,
 ) {
     var editing by remember { mutableStateOf<Destination?>(null) }
     var adding by remember { mutableStateOf(false) }
@@ -577,11 +617,13 @@ fun DestinationsScreen(
     if (adding || editing != null) {
         DestinationEditor(
             existing = editing,
+            prefs = prefs, onPrefs = onPrefs,
             onCancel = { adding = false; editing = null },
             onSave = { d ->
                 val list = if (editing != null) destinations.map { if (it.id == d.id) d else it }
                 else destinations + d
                 save(list, activeId ?: d.id)
+                StreamService.updateScene(d)          // if this channel is live, its layers move on air
                 adding = false; editing = null
             },
             onDelete = { d ->
@@ -630,6 +672,8 @@ fun DestinationsScreen(
 @Composable
 fun DestinationEditor(
     existing: Destination?,
+    prefs: Prefs,
+    onPrefs: (Prefs) -> Unit,
     onCancel: () -> Unit,
     onSave: (Destination) -> Unit,
     onDelete: (Destination) -> Unit,
@@ -648,19 +692,15 @@ fun DestinationEditor(
     var hevc by remember { mutableStateOf(existing?.hevc ?: false) }
     var keyframe by remember { mutableStateOf(existing?.keyframeSeconds ?: 2) }
     var portrait by remember { mutableStateOf(existing?.portrait ?: false) }
-    var overlay by remember { mutableStateOf(existing?.overlayUri ?: "") }
     var delay by remember { mutableStateOf(existing?.delaySeconds ?: 0) }
     var delayUnitMin by remember { mutableStateOf((existing?.delaySeconds ?: 0) >= 60) }
-    var facecam by remember { mutableStateOf(existing?.facecam ?: false) }
-    var facecamScale by remember { mutableStateOf((existing?.facecamScale ?: 30).toFloat()) }
-    var facecamCorner by remember { mutableStateOf(existing?.facecamCorner ?: 2) }
-    val ctx = LocalContext.current
-    // OpenDocument gives a persistable URI the stream service can still read later.
-    val pickOverlay = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            runCatching { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-            overlay = uri.toString()
-        }
+    // Scene layout (screen/overlay/facecam) is edited in SceneEditor; the form only carries it through.
+    var scene by remember { mutableStateOf(existing ?: Destination("", "", "", "")) }
+    var showScene by remember { mutableStateOf(false) }
+    if (showScene) {
+        SceneEditor(scene.copy(width = res.w, height = res.h, portrait = portrait), prefs, onPrefs,
+            onCancel = { showScene = false }, onDone = { scene = it; showScene = false })
+        return
     }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -671,10 +711,11 @@ fun DestinationEditor(
             Text(if (existing == null) "New Channel" else "Edit Channel", fontWeight = FontWeight.SemiBold)
             Text("Save", color = if (valid) Accent else Ios.secondaryLabel, fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.iosTap(enabled = valid) {
-                    onSave(
-                        Destination(existing?.id ?: UUID.randomUUID().toString(), name.trim(), url.trim(), key.trim(),
-                            res.w, res.h, fps, vBitrate.toInt(), aBitrate, sample, stereo, hevc, keyframe, portrait, overlay, delay,
-                            facecam, facecamScale.toInt(), facecamCorner))
+                    onSave(scene.copy(
+                        id = existing?.id ?: UUID.randomUUID().toString(), name = name.trim(), url = url.trim(), key = key.trim(),
+                        width = res.w, height = res.h, fps = fps, videoBitrate = vBitrate.toInt(), audioBitrate = aBitrate,
+                        sampleRate = sample, stereo = stereo, hevc = hevc, keyframeSeconds = keyframe, portrait = portrait,
+                        delaySeconds = delay))
                 })
         }
         SectionHeader("Platform")
@@ -721,20 +762,18 @@ fun DestinationEditor(
         Chips(SAMPLE_RATES, sample, { "${it / 1000}kHz" }) { sample = it }
         Spacer(Modifier.height(12.dp))
         InsetCard { RowItem("Stereo") { IosSwitch(stereo, { stereo = it }) } }
-        SectionHeader("Overlay")
+        SectionHeader("Scene & audio")
         InsetCard {
-            RowItem(if (overlay.isBlank()) "No overlay" else "Overlay set") {
-                Row {
-                    Text("Choose", color = Accent,
-                        modifier = Modifier.iosTap { pickOverlay.launch(arrayOf("image/*")) })
-                    if (overlay.isNotBlank()) {
-                        Spacer(Modifier.size(16.dp))
-                        Text("Clear", color = AppleRed, modifier = Modifier.iosTap { overlay = "" })
-                    }
+            Row(Modifier.fillMaxWidth().iosTap { showScene = true }.heightIn(min = 52.dp).padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Scene & Audio Mixer")
+                    Text(sceneSummary(scene), fontSize = 13.sp, color = Ios.secondaryLabel)
                 }
+                Text("›", color = Ios.secondaryLabel, fontSize = 22.sp)
             }
         }
-        Footer("PNG, JPG, WebP or animated GIF, composited top-right. One overlay per channel.")
+        Footer("Arrange your screen, overlay and facecam on the real stream frame, and set mic/game volume.")
         // Stream-delay meter: slider on the left reads the value; the unit chip on the right switches
         // the scale to seconds (0–59) or minutes (0–10), so any value 0s–10m is reachable.
         SectionHeader("Stream delay · ${if (delay >= 60) "${delay / 60}m ${delay % 60}s" else "${delay}s"}")
@@ -754,18 +793,6 @@ fun DestinationEditor(
         }
         Footer("OBS-style delay for this channel: holds the stream before sending (stops stream-sniping). Longer delays use more memory.")
 
-        SectionHeader("Facecam (front camera)")
-        InsetCard { RowItem("Show facecam") { IosSwitch(facecam, { facecam = it }) } }
-        if (facecam) {
-            SectionHeader("Facecam size · ${facecamScale.toInt()}%")
-            IosSlider(facecamScale, { facecamScale = it }, valueRange = 10f..60f, steps = 9)
-            SectionHeader("Facecam corner")
-            Chips(listOf(0, 1, 2, 3), facecamCorner,
-                { when (it) { 0 -> "Top-left"; 1 -> "Top-right"; 2 -> "Bottom-left"; else -> "Bottom-right" } }) {
-                facecamCorner = it
-            }
-        }
-        Footer("Front-camera picture-in-picture at the chosen corner. Uses more battery.")
         if (existing != null) {
             Spacer(Modifier.height(24.dp))
             InsetCard {
