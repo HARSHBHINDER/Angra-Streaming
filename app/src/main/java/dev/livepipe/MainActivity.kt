@@ -28,7 +28,10 @@ class MainActivity : ComponentActivity() {
     private lateinit var store: Store
     private val prefs = mutableStateOf(Prefs())   // single source of truth for prefs, shared with Compose
 
-    private fun setPrefs(p: Prefs) { prefs.value = p; store.prefsBundle = p; Widgets.refresh(this) }
+    private fun setPrefs(p: Prefs) {
+        if (p.charging != prefs.value.charging) StreamService.setChargingMode(p.charging)
+        prefs.value = p; store.prefsBundle = p; Widgets.refresh(this)
+    }
     private val openSuperChat = mutableStateOf(false)      // widget's Super Chat button
 
     private val perms = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {

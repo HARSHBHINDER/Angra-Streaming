@@ -1225,6 +1225,14 @@ fun SettingsScreen(
             Footer("Connect Bluetooth, wired or USB mics and they appear here instantly.")
         }
 
+        SectionHeader("Charging")
+        Chips(listOf(0, 1, 2), prefs.charging, { dev.livepipe.Charging.names[it] }) { onPrefs(prefs.copy(charging = it)) }
+        ChargingCard()
+        Footer("Normal: the stream keeps full quality and the battery gets what's left. Medium: on the charger, when the " +
+            "phone runs warm, the stream eases to 60% bitrate so charging isn't throttled. Fast: on the charger the stream " +
+            "runs at 60% (35% when warm), leaving the most power for the battery. No app can change the charger chip on a " +
+            "stock phone; charge limits like 80% and optimized charging are in your phone's battery settings.")
+
         SectionHeader("Network")
         InsetCard {
             RowItem("Adaptive bitrate") {
@@ -1241,6 +1249,41 @@ fun SettingsScreen(
         }
         Footer("Recording uses the active channel's resolution and bitrate (single encoder keeps CPU low).")
         Spacer(Modifier.height(32.dp))
+    }
+}
+
+/** Live charging readout: measured watts and current, battery temperature, and how far the stream is easing. */
+@Composable
+fun ChargingCard() {
+    val ctx = LocalContext.current
+    var r by remember { mutableStateOf(dev.livepipe.Charging.read(ctx)) }
+    LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(2000); r = dev.livepipe.Charging.read(ctx) } }
+    val ease by dev.livepipe.StreamService.chargeEase.collectAsState()
+    InsetCard {
+        RowItem(when {
+            r.charging -> "Charging · %.1f W".format(r.watts)
+            r.plugged -> "On power · not charging"
+            else -> "On battery"
+        }) {
+            Text(if (r.charging) "${r.mA} mA" else "${r.level}%", color = Ios.secondaryLabel)
+        }
+        Hairline()
+        RowItem("Battery ${r.level}% · %.1f°C".format(r.tempC)) {
+            Text(when {
+                r.thermal >= 3 -> "Hot"; dev.livepipe.Charging.warm(r.thermal) -> "Warm"
+                r.plugged -> r.source; else -> "Cool"
+            }, color = if (dev.livepipe.Charging.warm(r.thermal)) AppleRed else Ios.secondaryLabel)
+        }
+        if (ease < 1f) {
+            Hairline()
+            RowItem("Stream eased to ${(ease * 100).toInt()}% bitrate") { Text("for charging", color = Accent) }
+        }
+        Hairline()
+        RowItem("Phone battery settings") {
+            Text("Open", color = Accent, modifier = Modifier.iosTap {
+                runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_POWER_USAGE_SUMMARY)) }
+            })
+        }
     }
 }
 

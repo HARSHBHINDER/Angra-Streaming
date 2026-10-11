@@ -119,6 +119,7 @@ data class Prefs(
     val bubbleSecure: Boolean = true,            // FLAG_SECURE on the bubble so capture doesn't show its content
     val bubbleEdgeHide: Boolean = true,          // tuck into a slim edge handle when idle; tap the handle to pop out
     val theme: String = "original",              // ui.Palettes id
+    val charging: Int = Charging.NORMAL,         // Charging mode: how much the stream eases off on the charger
 ) {
     companion object {
         const val BUBBLE_MAX_TRANSPARENCY = 0.95f
@@ -177,6 +178,7 @@ class Store(context: Context) {
                 bubbleSlots = o.optString("bsl", BubbleAction.DEFAULT_IDS),
                 bubbleSecure = o.optBoolean("bsec", true),
                 theme = o.optString("th", "original"),
+                charging = o.optInt("chg", Charging.NORMAL),
             )
         }
         set(p) {
@@ -188,7 +190,7 @@ class Store(context: Context) {
                 put("bx", p.bubbleX.toDouble()); put("by", p.bubbleY.toDouble()); put("beh", p.bubbleEdgeHide); put("brk", p.breakImageUri)
                 put("bsl", p.bubbleSlots); put("bsec", p.bubbleSecure)
                 put("sc", p.superChat); put("ytk", p.ytApiKey); put("ast", p.alertStyle); put("asec", p.alertSeconds)
-                put("atot", p.alertShowTotal); put("th", p.theme)
+                put("atot", p.alertShowTotal); put("th", p.theme); put("chg", p.charging)
             }
             prefs.edit().putString("prefs", o.toString()).apply()
         }

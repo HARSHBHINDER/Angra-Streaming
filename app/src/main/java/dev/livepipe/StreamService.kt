@@ -5,13 +5,17 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Environment
 import android.os.IBinder
+import android.os.PowerManager
 import android.os.SystemClock
 import androidx.core.content.IntentCompat
 import com.pedro.common.ConnectChecker
@@ -59,6 +63,10 @@ class StreamService : Service(), ConnectChecker {
     private var recPaused = false
     private var overlayHidden = false
     private var dataSaver = false
+    private var chargeMode = Charging.NORMAL
+    private var ceiling = 0                         // bitrate ceiling in force (channel bitrate x data saver x charging)
+    private val power = object : BroadcastReceiver() { override fun onReceive(c: Context, i: Intent) = applyCeiling() }
+    private val thermal by lazy { PowerManager.OnThermalStatusChangedListener { applyCeiling() } }   // API 29+
     private var zoomed = false
     private var sceneDest: Destination? = null
     private var destName = ""
@@ -124,6 +132,10 @@ class StreamService : Service(), ConnectChecker {
         val prefs = store.prefsBundle
         maxBitrate = dest.videoBitrate
         adaptive = prefs.adaptiveBitrate
+        chargeMode = prefs.charging
+        // Battery broadcasts arrive on plug/unplug and temperature changes; thermal status covers the rest.
+        registerReceiver(power, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        if (Build.VERSION.SDK_INT >= 29) getSystemService(PowerManager::class.java).addThermalStatusListener(mainExecutor, thermal)
         destId = dest.id; this.audio = audio; canvasAspect = dest.canvasAspect(); destName = dest.name
         // Layer order = filter order: screen crop first, then overlay, then facecam on top.
         crop = CropFilterRender().also { s.getGlInterface().addFilter(it) }
@@ -153,7 +165,23 @@ class StreamService : Service(), ConnectChecker {
         return START_STICKY
     }
 
+    /** Re-derives the bitrate ceiling from data saver and the charging mode; applies it when it changes. */
+    private fun applyCeiling() {
+        if (maxBitrate <= 0) return
+        val r = Charging.read(this)
+        val f = Charging.bitrateFactor(chargeMode, r.plugged, Charging.warm(r.thermal))
+        val b = (maxBitrate * f * (if (dataSaver) 0.5f else 1f)).toInt()
+        chargeEase.value = f
+        if (b == ceiling) return
+        ceiling = b
+        bitrateAdapter?.setMaxBitrate(b)
+        stream?.setVideoBitrateOnFly(b)
+    }
+
     private fun stopEverything() {
+        runCatching { unregisterReceiver(power) }
+        if (Build.VERSION.SDK_INT >= 29) getSystemService(PowerManager::class.java).removeThermalStatusListener(thermal)
+        ceiling = 0; maxBitrate = 0; chargeEase.value = 1f
         BubbleService.stop(this)
         chat?.stop(); chat = null
         main.removeCallbacksAndMessages(null)
@@ -368,7 +396,7 @@ class StreamService : Service(), ConnectChecker {
         Widgets.refresh(this)
         if (adaptive) bitrateAdapter = BitrateAdapter { bps ->
             stream?.setVideoBitrateOnFly(bps)
-        }.apply { setMaxBitrate(maxBitrate) }
+        }.apply { setMaxBitrate(ceiling.takeIf { it > 0 } ?: maxBitrate) }
     }
     override fun onNewBitrate(bitrate: Long) {
         lastBitrate.value = bitrate              // feeds the live latency/health meter on the Stream tab
@@ -448,8 +476,7 @@ class StreamService : Service(), ConnectChecker {
         fun toggleDataSaver() {
             live?.run {
                 dataSaver = !dataSaver
-                val b = if (dataSaver) maxBitrate / 2 else maxBitrate
-                bitrateAdapter?.setMaxBitrate(b); stream?.setVideoBitrateOnFly(b)
+                applyCeiling()
             }
         }
 
@@ -480,6 +507,12 @@ class StreamService : Service(), ConnectChecker {
 
         /** Super Chat connection status for the Super Chat screen ("Connected…", errors); empty when off. */
         val superChatStatus = MutableStateFlow("")
+
+        /** Share of the channel bitrate the charging mode currently allows (1 = not easing). */
+        val chargeEase = MutableStateFlow(1f)
+
+        /** Charging mode changed in Settings mid-stream. */
+        fun setChargingMode(mode: Int) { live?.run { chargeMode = mode; applyCeiling() } }
 
         /** Plays a sample card on the live stream, so placement and style can be checked on air. */
         fun testSuperChat(tier: Int) { live?.queueAlert(SuperChatCard.sample(tier).copy(id = "test-${System.nanoTime()}")) }
