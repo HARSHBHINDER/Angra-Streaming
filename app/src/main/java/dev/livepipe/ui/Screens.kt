@@ -733,8 +733,10 @@ private fun BubbleSlotsEditor(prefs: Prefs, onPrefs: (Prefs) -> Unit) {
     val slots = dev.livepipe.BubbleAction.slots(prefs.bubbleSlots)
     var sel by remember { mutableStateOf(0) }
     InsetCard {
-        Row(Modifier.fillMaxWidth().padding(vertical = 14.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-            slots.forEachIndexed { i, a -> ActionChip(a, selected = i == sel, used = true) { sel = i } }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 14.dp)) {
+            slots.forEachIndexed { i, a ->
+                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { ActionChip(a, selected = i == sel, used = true) { sel = i } }
+            }
         }
         Hairline()
         Text("Put in slot ${sel + 1}", fontSize = 13.sp, color = Ios.secondaryLabel,

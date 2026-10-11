@@ -146,7 +146,10 @@ fun SuperChatScreen(
             Hairline()
             RowItem("Show supporter's total") { IosSwitch(prefs.alertShowTotal, { onPrefs(prefs.copy(alertShowTotal = it)) }) }
             Hairline()
-            RowItem("Position & size") { Text("Arrange", color = Accent, modifier = Modifier.iosTap { onPlace() }) }
+            RowItem("Position & size") {
+                Text(if (dest != null) "Arrange" else "Add a channel first", color = if (dest != null) Accent else Ios.secondaryLabel,
+                    modifier = Modifier.iosTap(dest != null) { onPlace() })
+            }
             Hairline()
             RowItem("Test on stream") {
                 Text(if (live) "Send test" else "Go live first", color = if (live) Accent else Ios.secondaryLabel,
@@ -159,7 +162,8 @@ fun SuperChatScreen(
 
         SectionHeader("YouTube")
         InsetCard {
-            FieldRow("Channel", source, { source = it; dest?.let { x -> onDest(x.copy(ytSource = it.trim())) } }, "@handle or live link")
+            if (dest != null) FieldRow("Channel", source, { source = it; onDest(dest.copy(ytSource = it.trim())) }, "@handle or live link")
+            else RowItem("Channel") { Text("Add a channel first", color = Ios.secondaryLabel) }
             Hairline()
             FieldRow("API key", prefs.ytApiKey, { onPrefs(prefs.copy(ytApiKey = it.trim())) }, "YouTube Data API key", secure = true)
         }
