@@ -3,5 +3,5 @@
     <string name="widget_studio_desc">Your channel and live time at a glance. Tap to go live.</string>
     <string name="widget_strip_desc">Go live or end, break, mute and Super Chat in one row.</string>
     <string name="widget_medium_desc">Live status and time with go live, break, mute and Super Chat.</string>
-    <string name="widget_dashboard_desc">Switch channels, record, break and mute, and go live.</string>
+    <string name="widget_dashboard_desc">Live time, switch channels, go live or end, record, break, mute and Super Chat.</string>
 </resources>

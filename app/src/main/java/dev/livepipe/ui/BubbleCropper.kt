@@ -50,7 +50,7 @@ import kotlin.math.roundToInt
  * drag to move it, pinch to zoom. "Choose" renders exactly what's inside the circle to a 512px round PNG.
  */
 @Composable
-fun BubbleCropper(source: Uri, onCancel: () -> Unit, onDone: (Bitmap) -> Unit) {
+fun BubbleCropper(source: Uri, onCancel: () -> Unit, onDone: (Bitmap) -> Unit, round: Boolean = true) {
     val ctx = LocalContext.current
     val bmp = remember(source) { decodeForCrop(ctx.contentResolver, source) }
     if (bmp == null) { onCancel(); return }
@@ -83,9 +83,11 @@ fun BubbleCropper(source: Uri, onCancel: () -> Unit, onDone: (Bitmap) -> Unit) {
                 // Dim everything outside the circle, then outline the window.
                 drawPath(Path().apply {
                     fillType = PathFillType.EvenOdd
-                    addRect(Rect(Offset.Zero, size)); addOval(window)
+                    addRect(Rect(Offset.Zero, size))
+                    if (round) addOval(window) else addRoundRect(androidx.compose.ui.geometry.RoundRect(window, androidx.compose.ui.geometry.CornerRadius(d * 0.22f)))
                 }, Color.Black.copy(alpha = 0.62f))
-                drawCircle(Color.White.copy(alpha = 0.9f), d / 2, c, style = Stroke(1.dp.toPx()))
+                if (round) drawCircle(Color.White.copy(alpha = 0.9f), d / 2, c, style = Stroke(1.dp.toPx()))
+                else drawRoundRect(Color.White.copy(alpha = 0.9f), window.topLeft, window.size, androidx.compose.ui.geometry.CornerRadius(d * 0.22f), style = Stroke(1.dp.toPx()))
             }
         }
         Column(Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 20.dp, vertical = 16.dp)) {
@@ -97,7 +99,7 @@ fun BubbleCropper(source: Uri, onCancel: () -> Unit, onDone: (Bitmap) -> Unit) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Cancel", color = Color.White, fontSize = 17.sp, modifier = Modifier.iosTap { onCancel() }.padding(8.dp))
                 Text("Choose", color = Accent, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.iosTap { onDone(renderCircle(bmp, window, base * scale, offset)) }.padding(8.dp))
+                    modifier = Modifier.iosTap { onDone(renderCircle(bmp, window, base * scale, offset, round)) }.padding(8.dp))
             }
         }
     }
@@ -121,7 +123,7 @@ private fun decodeForCrop(cr: android.content.ContentResolver, uri: Uri): Bitmap
 }.getOrNull()
 
 /** Maps the on-screen circle back to bitmap pixels and draws it into a round, transparent-cornered PNG. */
-private fun renderCircle(bmp: Bitmap, window: Rect, pxPerBmp: Float, offset: Offset): Bitmap {
+private fun renderCircle(bmp: Bitmap, window: Rect, pxPerBmp: Float, offset: Offset, round: Boolean = true): Bitmap {
     val out = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
     val canvas = android.graphics.Canvas(out)
     // Image top-left on screen, then the window's top-left expressed in bitmap coordinates.
@@ -129,7 +131,7 @@ private fun renderCircle(bmp: Bitmap, window: Rect, pxPerBmp: Float, offset: Off
     val imgTop = window.center.y + offset.y - bmp.height * pxPerBmp / 2
     val srcL = (window.left - imgLeft) / pxPerBmp; val srcT = (window.top - imgTop) / pxPerBmp
     val srcSize = window.width / pxPerBmp
-    canvas.clipPath(android.graphics.Path().apply { addCircle(256f, 256f, 256f, android.graphics.Path.Direction.CW) })
+    if (round) canvas.clipPath(android.graphics.Path().apply { addCircle(256f, 256f, 256f, android.graphics.Path.Direction.CW) })
     canvas.drawBitmap(bmp,
         android.graphics.Rect(srcL.roundToInt(), srcT.roundToInt(), (srcL + srcSize).roundToInt(), (srcT + srcSize).roundToInt()),
         android.graphics.Rect(0, 0, 512, 512), android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))

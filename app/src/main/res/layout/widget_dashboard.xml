@@ -22,7 +22,7 @@
         </LinearLayout>
         <TextView android:id="@+id/wg_go" android:layout_width="wrap_content" android:layout_height="34dp"
             android:layout_marginStart="8dp" android:background="@drawable/wg_capsule_go" android:gravity="center"
-            android:paddingStart="14dp" android:paddingEnd="14dp" android:singleLine="true" android:text="Go Live"
+            android:paddingStart="14dp" android:paddingEnd="14dp" android:maxLines="1" android:text="Go Live"
             android:textColor="#FFFFFFFF" android:textSize="14sp" android:textStyle="bold" />
     </LinearLayout>
     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp"

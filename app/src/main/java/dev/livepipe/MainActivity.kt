@@ -1,5 +1,6 @@
 package dev.livepipe
 
+import androidx.compose.runtime.collectAsState
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -29,8 +30,10 @@ class MainActivity : ComponentActivity() {
     private val prefs = mutableStateOf(Prefs())   // single source of truth for prefs, shared with Compose
 
     private fun setPrefs(p: Prefs) {
-        if (p.charging != prefs.value.charging) StreamService.setChargingMode(p.charging)
-        prefs.value = p; store.prefsBundle = p; Widgets.refresh(this)
+        if (p.charging != prefs.value.charging) Charging.setMode(this, p.charging)
+        val widgetsChanged = p.recordWhileStreaming != prefs.value.recordWhileStreaming
+        prefs.value = p; store.prefsBundle = p
+        if (widgetsChanged) Widgets.refresh(this)
     }
     private val openSuperChat = mutableStateOf(false)      // widget's Super Chat button
 
@@ -47,8 +50,56 @@ class MainActivity : ComponentActivity() {
     }
     // Picked bubble image goes to the cropper first; the cropped circle is saved as the bubble icon.
     private val cropSource = mutableStateOf<Uri?>(null)
+    private var cropLogo = false                       // the open cropper is for the app logo (square), not the bubble
     private val pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) cropSource.value = uri
+        if (uri != null) { cropLogo = false; cropSource.value = uri }
+    }
+    private val pickLogo = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) { cropLogo = true; cropSource.value = uri }
+    }
+
+    private fun saveLogo(bmp: Bitmap) {
+        filesDir.listFiles { f -> f.name.startsWith("logo_") }?.forEach { it.delete() }
+        val f = File(filesDir, "logo_${System.currentTimeMillis()}.png")
+        f.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        setPrefs(prefs.value.copy(logoUri = Uri.fromFile(f).toString()))
+        cropSource.value = null
+        // A Home Screen icon made earlier picks up the new picture.
+        runCatching { androidx.core.content.pm.ShortcutManagerCompat.updateShortcuts(this, listOf(logoShortcut(bmp))) }
+    }
+
+    /** Home Screen icon carrying the user's logo; opens the app like the launcher icon. */
+    private fun logoShortcut(logo: Bitmap): androidx.core.content.pm.ShortcutInfoCompat {
+        // Adaptive icon: 108dp canvas, the launcher masks the centre ~72dp, so the logo fills the visible area.
+        val s = 432
+        val icon = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(icon).apply {
+            drawColor(android.graphics.Color.BLACK)
+            val inner = (s * 0.70f).toInt(); val o = (s - inner) / 2
+            drawBitmap(logo, null, android.graphics.Rect(o, o, o + inner, o + inner), android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+        }
+        return androidx.core.content.pm.ShortcutInfoCompat.Builder(this, "custom_logo")
+            .setShortLabel("Angra Streaming")
+            .setIcon(androidx.core.graphics.drawable.IconCompat.createWithAdaptiveBitmap(icon))
+            .setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN))
+            .build()
+    }
+
+    /** Deletes the custom logo: the oni returns in the app and the home-screen icon made from it is retired. */
+    private fun resetLogo() {
+        filesDir.listFiles { f -> f.name.startsWith("logo_") }?.forEach { it.delete() }
+        setPrefs(prefs.value.copy(logoUri = ""))
+        runCatching { androidx.core.content.pm.ShortcutManagerCompat.disableShortcuts(this, listOf("custom_logo"), "Logo removed") }
+    }
+
+    private fun pinLogoIcon() {
+        val uri = prefs.value.logoUri
+        if (uri.isBlank()) { android.widget.Toast.makeText(this, "Choose your logo first", android.widget.Toast.LENGTH_SHORT).show(); return }
+        val bmp = runCatching { contentResolver.openInputStream(Uri.parse(uri))?.use { android.graphics.BitmapFactory.decodeStream(it) } }.getOrNull() ?: return
+        if (!androidx.core.content.pm.ShortcutManagerCompat.isRequestPinShortcutSupported(this)) {
+            android.widget.Toast.makeText(this, "Your launcher doesn't support adding icons", android.widget.Toast.LENGTH_LONG).show(); return
+        }
+        androidx.core.content.pm.ShortcutManagerCompat.requestPinShortcut(this, logoShortcut(bmp), null)
     }
 
     private fun saveBubble(bmp: Bitmap) {
@@ -107,10 +158,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         store = Store(this)
         prefs.value = store.prefsBundle
+        ChargeService.sync(this, prefs.value.charging)   // keep a chosen charge limit enforced
         mics.value = micDevices()
         getSystemService(android.media.AudioManager::class.java).registerAudioDeviceCallback(micCallback, null)
         setContent {
-            LivePipeTheme(prefs.value.theme) {
+            // Live theme pauses while a stream is starting or on air: the app is out of sight then anyway.
+            val streaming = StreamService.state.collectAsState().value.let { it == StreamService.State.LIVE || it == StreamService.State.CONNECTING }
+            LivePipeTheme(prefs.value.theme, live = prefs.value.liveTheme && !streaming) {
                 Box {
                 App(
                     initialDestinations = store.destinations,
@@ -122,10 +176,13 @@ class MainActivity : ComponentActivity() {
                     onPickBubbleImage = { pickImage.launch("image/*") },
                     micDevices = mics.value,
                     onPreviewBubble = ::previewBubble,
+                    onPickLogo = { pickLogo.launch("image/*") },
+                    onPinIcon = ::pinLogoIcon,
+                    onResetLogo = ::resetLogo,
                     openSuperChat = openSuperChat.value,
                     onSuperChatOpened = { openSuperChat.value = false },
                 )
-                cropSource.value?.let { BubbleCropper(it, onCancel = { cropSource.value = null }, onDone = ::saveBubble) }
+                cropSource.value?.let { BubbleCropper(it, onCancel = { cropSource.value = null }, onDone = { b -> if (cropLogo) saveLogo(b) else saveBubble(b) }, round = !cropLogo) }
                 }
             }
         }

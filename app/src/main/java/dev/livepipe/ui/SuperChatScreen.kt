@@ -61,7 +61,7 @@ private val TIER_LABELS = listOf("$1", "$2", "$5", "$10", "$20", "$50", "$100")
 @Composable
 fun SuperChatScreen(
     dest: Destination?, prefs: Prefs, onPrefs: (Prefs) -> Unit, onDest: (Destination) -> Unit,
-    onPlace: () -> Unit, onClose: () -> Unit,
+    onPlace: () -> Unit, onClose: () -> Unit, onPlaceChat: () -> Unit = {},
 ) {
     val state by StreamService.state.collectAsState()
     val status by StreamService.superChatStatus.collectAsState()
@@ -81,7 +81,7 @@ fun SuperChatScreen(
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).verticalScroll(rememberScrollState())) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             Spacer(Modifier.width(44.dp))
-            Text("Super Chat", fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
+            Text("Chat & Super Chats", fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
             Text("Done", color = Accent, fontWeight = FontWeight.SemiBold, modifier = Modifier.iosTap { onClose() })
         }
 
@@ -142,7 +142,7 @@ fun SuperChatScreen(
 
         SectionHeader("On stream")
         InsetCard {
-            RowItem("Show Super Chats") { IosSwitch(prefs.superChat, { onPrefs(prefs.copy(superChat = it)) }) }
+            RowItem("Show Super Chats") { IosSwitch(prefs.superChat, { onPrefs(prefs.copy(superChat = it)); StreamService.refreshChat() }) }
             Hairline()
             RowItem("Show supporter's total") { IosSwitch(prefs.alertShowTotal, { onPrefs(prefs.copy(alertShowTotal = it)) }) }
             Hairline()
@@ -156,6 +156,23 @@ fun SuperChatScreen(
                     modifier = Modifier.iosTap(live) { StreamService.testSuperChat(tier) })
             }
         }
+        SectionHeader("Live chat on stream")
+        InsetCard {
+            RowItem("Show live chat") { IosSwitch(prefs.showChat, { onPrefs(prefs.copy(showChat = it)); StreamService.refreshChat() }) }
+            Hairline()
+            RowItem("Position & size") {
+                Text(if (dest != null) "Arrange" else "Add a channel first", color = if (dest != null) Accent else Ios.secondaryLabel,
+                    modifier = Modifier.iosTap(dest != null) { onPlaceChat() })
+            }
+            Hairline()
+            RowItem("Test on stream") {
+                Text(if (live) "Send test" else "Go live first", color = if (live) Accent else Ios.secondaryLabel,
+                    modifier = Modifier.iosTap(live) { StreamService.testChat() })
+            }
+        }
+        Footer("Your viewers' messages in a box on stream, newest at the bottom, names in YouTube's colours for members, " +
+            "moderators and you. Use it with Super Chats, on its own, or turn both off. Changes apply live.")
+
         SectionHeader("On screen for")
         Chips(listOf(5, 8, 12, 20), prefs.alertSeconds, { "$it s" }) { onPrefs(prefs.copy(alertSeconds = it)) }
         Footer("Several at once queue up and play one after another.")

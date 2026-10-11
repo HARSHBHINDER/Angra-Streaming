@@ -43,6 +43,9 @@ data class Destination(
     val alertX: Float = 0.5f,               // Super Chat card centre, 0..1
     val alertY: Float = 0.2f,
     val alertW: Float = 0.42f,              // card width as a fraction of canvas width (height follows the card)
+    val chatX: Float = 0.2f,                // live chat box centre, 0..1
+    val chatY: Float = 0.62f,
+    val chatW: Float = 0.34f,               // chat box width as a fraction of canvas width
 ) {
     /** Full endpoint RootEncoder streams to. Guards the slash between url and key. */
     fun endpoint(): String = if (key.isBlank()) url else url.trimEnd('/') + "/" + key
@@ -57,6 +60,7 @@ data class Destination(
         put("ox", overlayX.toDouble()); put("oy", overlayY.toDouble()); put("ow", overlayW.toDouble())
         put("fcx", facecamX.toDouble()); put("fcy", facecamY.toDouble()); put("pin", pinned)
         put("yts", ytSource); put("ax", alertX.toDouble()); put("ay", alertY.toDouble()); put("aw", alertW.toDouble())
+        put("chx", chatX.toDouble()); put("chy", chatY.toDouble()); put("chw", chatW.toDouble())
     }
 
     companion object {
@@ -81,6 +85,8 @@ data class Destination(
             ytSource = o.optString("yts", ""),
             alertX = o.optDouble("ax", 0.5).toFloat(), alertY = o.optDouble("ay", 0.2).toFloat(),
             alertW = o.optDouble("aw", 0.42).toFloat(),
+            chatX = o.optDouble("chx", 0.2).toFloat(), chatY = o.optDouble("chy", 0.62).toFloat(),
+            chatW = o.optDouble("chw", 0.34).toFloat(),
         )
 
         private fun cornerCentre(corner: Int, scalePct: Int, x: Boolean): Double {
@@ -99,6 +105,7 @@ data class Destination(
 data class Prefs(
     val bubbleEnabled: Boolean = true,
     val bubbleShowsTimer: Boolean = false,      // false = icon, true = elapsed timer
+    val bubbleShowsFps: Boolean = false,        // shows the live frames per second instead (wins over the timer)
     val bubbleTransparency: Float = 0.2f,        // 0f opaque .. 0.95f near-invisible (control only; OS indicator stays)
     val bubbleImageUri: String = "",             // custom image; empty = default icon
     val recordWhileStreaming: Boolean = false,
@@ -110,6 +117,7 @@ data class Prefs(
     val bubbleX: Float = 0f,                     // bubble position as screen fractions (snapped to an edge)
     val bubbleY: Float = 0.3f,
     val superChat: Boolean = false,              // show YouTube Super Chats on stream
+    val showChat: Boolean = false,               // show ordinary live chat messages in a box on stream
     val ytApiKey: String = "",                   // the streamer's own YouTube Data API key (encrypted store)
     val alertStyle: Int = 0,                     // SuperChatCard.STYLES index
     val alertSeconds: Int = 8,
@@ -119,7 +127,9 @@ data class Prefs(
     val bubbleSecure: Boolean = true,            // FLAG_SECURE on the bubble so capture doesn't show its content
     val bubbleEdgeHide: Boolean = true,          // tuck into a slim edge handle when idle; tap the handle to pop out
     val theme: String = "original",              // ui.Palettes id
-    val charging: Int = Charging.NORMAL,         // Charging mode: how much the stream eases off on the charger
+    val liveTheme: Boolean = false,              // Live theme: scenes move (~10 fps, paused off-screen); off = a still frame
+    val logoUri: String = "",                    // the user's own app logo (copy in app storage); empty = Angra oni
+    val charging: Int = Charging.FAST,           // Charging mode; Fast = the phone's own stock charging
 ) {
     companion object {
         const val BUBBLE_MAX_TRANSPARENCY = 0.95f
@@ -162,7 +172,7 @@ class Store(context: Context) {
             val o = JSONObject(prefs.getString("prefs", "{}") ?: "{}")
             return Prefs(
                 bubbleEnabled = o.optBoolean("be", true),
-                bubbleShowsTimer = o.optBoolean("bt", false),
+                bubbleShowsTimer = o.optBoolean("bt", false), bubbleShowsFps = o.optBoolean("bfps", false),
                 bubbleTransparency = o.optDouble("btr", 0.2).toFloat(),
                 bubbleImageUri = o.optString("bimg", ""),
                 recordWhileStreaming = o.optBoolean("rws", false),
@@ -172,25 +182,26 @@ class Store(context: Context) {
                 micVolume = o.optDouble("mv", 1.0).toFloat(), gameVolume = o.optDouble("gv", 1.0).toFloat(),
                 bubbleX = o.optDouble("bx", 0.0).toFloat(), bubbleY = o.optDouble("by", 0.3).toFloat(),
                 bubbleEdgeHide = o.optBoolean("beh", true),
+                logoUri = o.optString("logo", ""),
                 breakImageUri = o.optString("brk", ""),
-                superChat = o.optBoolean("sc", false), ytApiKey = o.optString("ytk", ""),
+                superChat = o.optBoolean("sc", false), showChat = o.optBoolean("chat", false), ytApiKey = o.optString("ytk", ""),
                 alertStyle = o.optInt("ast", 0), alertSeconds = o.optInt("asec", 8), alertShowTotal = o.optBoolean("atot", true),
                 bubbleSlots = o.optString("bsl", BubbleAction.DEFAULT_IDS),
                 bubbleSecure = o.optBoolean("bsec", true),
-                theme = o.optString("th", "original"),
-                charging = o.optInt("chg", Charging.NORMAL),
+                theme = o.optString("th", "original"), liveTheme = o.optBoolean("lt", false),
+                charging = o.optInt("chg", Charging.FAST),
             )
         }
         set(p) {
             val o = JSONObject().apply {
-                put("be", p.bubbleEnabled); put("bt", p.bubbleShowsTimer); put("btr", p.bubbleTransparency.toDouble())
+                put("be", p.bubbleEnabled); put("bt", p.bubbleShowsTimer); put("bfps", p.bubbleShowsFps); put("btr", p.bubbleTransparency.toDouble())
                 put("bimg", p.bubbleImageUri); put("rws", p.recordWhileStreaming)
                 put("as", p.audioSource); put("ab", p.adaptiveBitrate)
                 put("mic", p.micDeviceId); put("mv", p.micVolume.toDouble()); put("gv", p.gameVolume.toDouble())
-                put("bx", p.bubbleX.toDouble()); put("by", p.bubbleY.toDouble()); put("beh", p.bubbleEdgeHide); put("brk", p.breakImageUri)
+                put("bx", p.bubbleX.toDouble()); put("by", p.bubbleY.toDouble()); put("beh", p.bubbleEdgeHide); put("logo", p.logoUri); put("brk", p.breakImageUri)
                 put("bsl", p.bubbleSlots); put("bsec", p.bubbleSecure)
-                put("sc", p.superChat); put("ytk", p.ytApiKey); put("ast", p.alertStyle); put("asec", p.alertSeconds)
-                put("atot", p.alertShowTotal); put("th", p.theme); put("chg", p.charging)
+                put("sc", p.superChat); put("chat", p.showChat); put("ytk", p.ytApiKey); put("ast", p.alertStyle); put("asec", p.alertSeconds)
+                put("atot", p.alertShowTotal); put("th", p.theme); put("lt", p.liveTheme); put("chg", p.charging)
             }
             prefs.edit().putString("prefs", o.toString()).apply()
         }

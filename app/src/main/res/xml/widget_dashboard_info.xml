@@ -3,5 +3,5 @@
     android:targetCellWidth="4" android:targetCellHeight="4"
     android:maxResizeWidth="520dp" android:maxResizeHeight="600dp"
     android:resizeMode="horizontal|vertical" android:widgetCategory="home_screen" android:updatePeriodMillis="0"
-    android:initialLayout="@layout/widget_dashboard" android:previewLayout="@layout/widget_dashboard"
+    android:initialLayout="@layout/widget_dashboard" android:previewImage="@drawable/wg_preview_dashboard"
     android:description="@string/widget_dashboard_desc" />

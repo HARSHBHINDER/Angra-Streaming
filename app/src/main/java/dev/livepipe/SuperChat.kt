@@ -39,6 +39,47 @@ data class SuperChat(
     val avatar: Bitmap? = null,
 )
 
+/** One ordinary live-chat message. [role]: 0 viewer, 1 member, 2 moderator, 3 channel owner. */
+data class ChatLine(val id: String, val name: String, val text: String, val role: Int)
+
+/** The live chat box drawn on stream: newest message at the bottom, names in YouTube's role colours. */
+object ChatBox {
+    const val W = 600
+    const val H = 440
+    private val roleColors = intArrayOf(0xFFB9C2CF.toInt(), 0xFF2BA640.toInt(), 0xFF5E84F1.toInt(), 0xFFFFD600.toInt())
+
+    fun sample() = listOf(
+        ChatLine("s1", "Riya", "GG that clutch was insane", 0),
+        ChatLine("s2", "Kabir", "first time here, love the stream", 1),
+        ChatLine("s3", "Mod", "Be kind in chat", 2),
+        ChatLine("s4", "Arjun", "which sensitivity do you use?", 0),
+        ChatLine("s5", "Neha", "lets goooo", 0),
+    )
+
+    fun render(lines: List<ChatLine>): Bitmap {
+        val bmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        c.drawRoundRect(RectF(0f, 0f, W.toFloat(), H.toFloat()), 28f, 28f,
+            android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = 0x99000000.toInt() })
+        val pad = 22f
+        val body = TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { textSize = 27f; color = 0xFFFFFFFF.toInt() }
+        var y = H - pad
+        for (l in lines.asReversed()) {
+            val sb = android.text.SpannableStringBuilder()
+            sb.append(l.name, android.text.style.ForegroundColorSpan(roleColors[l.role.coerceIn(0, 3)]), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            sb.setSpan(android.text.style.StyleSpan(Typeface.BOLD), 0, sb.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            sb.append("  ").append(l.text)
+            val layout = StaticLayout.Builder.obtain(sb, 0, sb.length, body, (W - pad * 2).toInt())
+                .setMaxLines(3).setEllipsize(TextUtils.TruncateAt.END).build()
+            if (y - layout.height < pad) break
+            y -= layout.height
+            c.save(); c.translate(pad, y); layout.draw(c); c.restore()
+            y -= 12f
+        }
+        return bmp
+    }
+}
+
 /**
  * Watches a YouTube live chat for Super Chats and Super Stickers through the official YouTube Data API v3,
  * using the streamer's own API key. [source] = a live video link/ID, a channel ID (UC…) or an @handle.
@@ -51,6 +92,7 @@ class YouTubeChat(
     private val source: String,
     private val onEvent: (SuperChat) -> Unit,
     private val onStatus: (String) -> Unit,
+    private val onChat: ((ChatLine) -> Unit)? = null,     // ordinary messages, when the chat box is wanted
 ) {
     @Volatile private var running = true
     private val thread = Thread({ loop() }, "youtube-chat").apply { isDaemon = true; start() }
@@ -68,7 +110,7 @@ class YouTubeChat(
                     onStatus("Looking for your YouTube live stream…")
                     chatId = liveChatId()
                     if (chatId == null) { onStatus("Not live on YouTube yet. Checking again shortly."); Thread.sleep(45_000); continue }
-                    onStatus("Connected. Watching live chat for Super Chats.")
+                    onStatus("Connected to your live chat.")
                     page = null; first = true
                 }
                 val r = get("liveChat/messages?part=snippet,authorDetails&maxResults=200&liveChatId=${enc(chatId)}" +
@@ -77,7 +119,11 @@ class YouTubeChat(
                 // The first page is chat history from before we connected: skip it so old Super Chats don't replay.
                 if (!first) {
                     val items = r.optJSONArray("items")
-                    for (i in 0 until (items?.length() ?: 0)) parse(items!!.getJSONObject(i), totals)?.let(onEvent)
+                    for (i in 0 until (items?.length() ?: 0)) {
+                        val it = items!!.getJSONObject(i)
+                        val sc = parse(it, totals)
+                        if (sc != null) onEvent(sc) else onChat?.let { cb -> line(it)?.let(cb) }
+                    }
                 }
                 first = false
                 Thread.sleep(maxOf(r.optLong("pollingIntervalMillis", 10_000), 8_000))
@@ -120,6 +166,21 @@ class YouTubeChat(
             total = if (sum > micros) money(sum, currency) else null,
             avatar = download(avatarUrl),
         )
+    }
+
+    private fun line(item: JSONObject): ChatLine? {
+        val sn = item.optJSONObject("snippet") ?: return null
+        if (sn.optString("type") != "textMessageEvent") return null
+        val a = item.optJSONObject("authorDetails")
+        val text = sn.optString("displayMessage").ifBlank { sn.optJSONObject("textMessageDetails")?.optString("messageText").orEmpty() }
+        if (text.isBlank()) return null
+        val role = when {
+            a?.optBoolean("isChatOwner") == true -> 3
+            a?.optBoolean("isChatModerator") == true -> 2
+            a?.optBoolean("isChatSponsor") == true -> 1
+            else -> 0
+        }
+        return ChatLine(item.optString("id"), a?.optString("displayName")?.ifBlank { null } ?: "Viewer", text, role)
     }
 
     private fun liveChatId(): String? {

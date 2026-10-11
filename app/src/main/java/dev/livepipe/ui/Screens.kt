@@ -1,5 +1,6 @@
 package dev.livepipe.ui
 
+import dev.livepipe.Charging.Engine as E
 import android.content.Intent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.input.pointer.pointerInput
@@ -42,6 +43,8 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
@@ -75,6 +78,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import kotlin.math.roundToInt
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
@@ -129,17 +139,16 @@ fun Footer(text: String) = Text(
 )
 
 @Composable
-fun LargeTitle(text: String, modifier: Modifier = Modifier) = Text(
-    text, fontSize = 34.sp, lineHeight = 41.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.6).sp,
-    modifier = modifier.padding(start = 20.dp, top = 20.dp, bottom = 4.dp),
-)
+fun LargeTitle(text: String, modifier: Modifier = Modifier) = Row(
+    modifier.padding(start = 20.dp, top = 20.dp, bottom = 4.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically,
+) {
+    LocalTheme.current.p.look.seal?.let { Seal(it, filled = !isDark); Spacer(Modifier.size(10.dp)) }
+    ThemedTitle(text, 34.sp)
+}
 
 @Composable
-fun InsetCard(content: @Composable ColumnScope.() -> Unit) = Surface(
-    color = MaterialTheme.colorScheme.surface,
-    shape = AppleShapes.card,
-    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-) { Column(content = content) }
+fun InsetCard(content: @Composable ColumnScope.() -> Unit) =
+    Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().themed(), content = content)
 
 /** Hairline row divider, inset from the leading edge like UITableView. */
 @Composable
@@ -186,12 +195,13 @@ fun <T> Chips(
     onSelect: (T) -> Unit,
 ) {
     val idx = options.indexOf(selected)
-    BoxWithConstraints(modifier.height(34.dp).background(Ios.segmentTrack, RoundedCornerShape(9.dp)).padding(2.dp)) {
+    val sh = LocalTheme.current.p.look.shape(Part.SMALL)
+    BoxWithConstraints(modifier.height(34.dp).background(Ios.segmentTrack, sh).padding(2.dp)) {
         val w = maxWidth / options.size.coerceAtLeast(1)
         val x by animateDpAsState(w * idx.coerceAtLeast(0), spring(dampingRatio = 1f, stiffness = 500f), label = "seg")
         if (idx >= 0) Box(
             Modifier.offset(x = x).width(w).fillMaxHeight()
-                .shadow(1.dp, RoundedCornerShape(7.dp)).background(Ios.segmentThumb, RoundedCornerShape(7.dp))
+                .shadow(1.dp, sh).background(Ios.segmentThumb, sh)
         )
         Row(Modifier.fillMaxSize()) {
             options.forEachIndexed { i, opt ->
@@ -226,8 +236,20 @@ fun IosSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
 fun IosSlider(
     value: Float, onValueChange: (Float) -> Unit, modifier: Modifier = Modifier,
     valueRange: ClosedFloatingPointRange<Float> = 0f..1f, steps: Int = 0,
+    onLive: ((Float) -> Unit)? = null,                 // cheap live effect while dragging (volume, bubble alpha)
+) {
+    // Dragging only moves local state; the value is saved once, on release.
+    var v by remember(value) { mutableFloatStateOf(value) }
+    IosSliderBar(v, { v = it; onLive?.invoke(it) }, { if (v != value) onValueChange(v) }, modifier, valueRange, steps)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun IosSliderBar(
+    value: Float, onChange: (Float) -> Unit, onDone: () -> Unit, modifier: Modifier,
+    valueRange: ClosedFloatingPointRange<Float>, steps: Int,
 ) = Slider(
-    value, onValueChange, modifier.padding(horizontal = 16.dp), valueRange = valueRange, steps = steps,
+    value, onChange, modifier.padding(horizontal = 16.dp), valueRange = valueRange, steps = steps, onValueChangeFinished = onDone,
     thumb = { Box(Modifier.size(28.dp).shadow(3.dp, CircleShape).background(Color.White, CircleShape)) },
     track = { st ->
         val span = st.valueRange.endInclusive - st.valueRange.start
@@ -310,7 +332,7 @@ val PLATFORMS = listOf(
     Platform("YouTube", "rtmps://a.rtmp.youtube.com/live2"),
     Platform("Twitch", "rtmp://live.twitch.tv/app"),
     Platform("Facebook", "rtmps://live-api-s.facebook.com:443/rtmp/"),
-    Platform("Kick", ""),      // Kick ingest URL is per-account; paste the full URL + key
+    Platform("Kick", "rtmps://fa723fc1b171.global-contribute.live-video.net/app"),   // Kick's ingest; the key picks the channel
     Platform("Custom", ""),
 )
 
@@ -327,12 +349,16 @@ fun App(
     onPickBubbleImage: () -> Unit,
     micDevices: List<Pair<Int, String>>,
     onPreviewBubble: (Boolean) -> Unit = {},
+    onPickLogo: () -> Unit = {},
+    onPinIcon: () -> Unit = {},
+    onResetLogo: () -> Unit = {},
     openSuperChat: Boolean = false,                 // home-screen widget asked for the Super Chat screen
     onSuperChatOpened: () -> Unit = {},
 ) {
     var tab by remember { mutableStateOf(0) }
     var sceneFor by remember { mutableStateOf<Destination?>(null) }   // scene editor opened from the Stream tab
-    var sceneAlerts by remember { mutableStateOf(false) }               // ...opened on the Super Chat alert layer
+    var sceneAlerts by remember { mutableStateOf(false) }
+    var sceneChat by remember { mutableStateOf(false) }               // ...opened on the Super Chat alert layer
     var superChat by remember { mutableStateOf(false) }
     LaunchedEffect(openSuperChat) { if (openSuperChat) { tab = 0; superChat = true; onSuperChatOpened() } }
     var destinations by remember { mutableStateOf(initialDestinations) }
@@ -342,73 +368,84 @@ fun App(
         destinations = list; activeId = active; onPersistDestinations(list, active)
     }
 
+    // Liquid Glass themes: the whole screen is recorded once into a layer the floating tab bar refracts.
+    val floating = LocalTheme.current.p.look.floatingBar
+    val screenLayer = androidx.compose.ui.graphics.rememberGraphicsLayer()
+    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().then(if (floating) Modifier.drawWithContent {
+        screenLayer.record { this@drawWithContent.drawContent() }
+        drawLayer(screenLayer)
+    } else Modifier)) {
+    ThemeBackdrop()
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        bottomBar = {
-            // iOS tab bar: translucent bar, hairline top edge, tinted icon+label, no Material pill.
-            Column {
-                Box(Modifier.fillMaxWidth().height(0.5.dp).background(Ios.separator))
-                NavigationBar(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-                    tonalElevation = 0.dp, modifier = Modifier.height(64.dp),
-                ) {
-                    val c = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Accent, selectedTextColor = Accent,
-                        unselectedIconColor = Ios.secondaryLabel, unselectedTextColor = Ios.secondaryLabel,
-                        indicatorColor = Color.Transparent,
-                    )
-                    listOf(Icons.Filled.PlayArrow to "Stream", Icons.Filled.List to "Channels",
-                        Icons.Filled.Settings to "Settings").forEachIndexed { i, (icon, name) ->
-                        NavigationBarItem(tab == i, { tab = i }, colors = c,
-                            icon = { Icon(icon, null) }, label = { Text(name) })
-                    }
-                }
-            }
-        },
+        containerColor = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onBackground,
+        bottomBar = { if (!floating) TabBar(tab, null) { tab = it } },
     ) { pad ->
-        Box(Modifier.padding(pad).fillMaxSize()) {
-            EmberBackdrop()
+        // Tablets: the content keeps a readable column, centred; the theme still fills the screen behind it.
+        Box(Modifier.padding(pad).fillMaxSize().wrapContentWidth().widthIn(max = 720.dp)) {
             val editingScene = sceneFor
             if (editingScene != null) {
-                SceneEditor(editingScene, prefs, onPrefs, onCancel = { sceneFor = null; sceneAlerts = false }, onDone = { d ->
+                SceneEditor(editingScene, prefs, onPrefs, onCancel = { sceneFor = null; sceneAlerts = false; sceneChat = false }, onDone = { d ->
                     saveDest(destinations.map { if (it.id == d.id) d else it }, activeId)
                     StreamService.updateScene(d)          // live: layers move on air
-                    sceneFor = null; sceneAlerts = false
-                }, alerts = sceneAlerts)
+                    sceneFor = null; sceneAlerts = false; sceneChat = false
+                }, alerts = sceneAlerts, chat = sceneChat)
             } else if (superChat) {
                 val active = destinations.firstOrNull { it.id == activeId } ?: destinations.firstOrNull()
                 SuperChatScreen(active, prefs, onPrefs,
                     onDest = { d -> saveDest(destinations.map { if (it.id == d.id) d else it }, activeId) },
                     onPlace = { sceneAlerts = true; sceneFor = active },
+                    onPlaceChat = { sceneChat = true; sceneFor = active },
                     onClose = { superChat = false })
             } else when (tab) {
                 0 -> StreamScreen(destinations, activeId, { saveDest(destinations, it) }, { tab = 1 },
                     prefs, onToggleStream, onPrefs,
                     onScene = { sceneFor = destinations.firstOrNull { it.id == activeId } ?: destinations.firstOrNull() },
-                    onSuperChat = { superChat = true })
+                    onSuperChat = { superChat = true }, onResetLogo = onResetLogo,
+                    onEditActive = { d -> saveDest(destinations.map { if (it.id == d.id) d else it }, activeId) })
                 1 -> DestinationsScreen(destinations, activeId, ::saveDest, prefs, onPrefs)
-                else -> SettingsScreen(prefs, onPickBubbleImage, micDevices, onPrefs, onPreviewBubble)
+                else -> SettingsScreen(prefs, onPickBubbleImage, micDevices, onPrefs, onPreviewBubble, onPickLogo, onPinIcon, onResetLogo)
             }
         }
+    }
+    }
+    // Floats over the content (which scrolls beneath it), so the glass has real content to bend.
+    if (floating) Box(Modifier.align(Alignment.BottomCenter)) { TabBar(tab, screenLayer) { tab = it } }
+    }
+}
+
+/**
+ * Tab bar in the theme: a floating glass capsule for the glass themes (iOS 26), otherwise a bar whose top edge
+ * carries the theme's line (Tron's lit cyan, Cyberpunk's yellow…).
+ */
+@Composable
+private fun TabBar(tab: Int, screen: androidx.compose.ui.graphics.layer.GraphicsLayer?, onTab: (Int) -> Unit) {
+    val look = LocalTheme.current.p.look
+    val items = listOf(Icons.Filled.PlayArrow to "Stream", Icons.Filled.List to "Channels", Icons.Filled.Settings to "Settings")
+    val row = @Composable {
+        Row(Modifier.fillMaxWidth().height(58.dp)) {
+            items.forEachIndexed { i, (icon, name) ->
+                val on = tab == i
+                Column(Modifier.weight(1f).fillMaxHeight().iosTap { onTab(i) },
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    Icon(icon, null, tint = if (on) Accent else Ios.secondaryLabel)
+                    Text(if (look.titleCaps) name.uppercase() else name, fontSize = 10.sp, letterSpacing = if (look.titleCaps) 1.sp else 0.sp,
+                        color = if (on) Accent else Ios.secondaryLabel, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium)
+                }
+            }
+        }
+    }
+    if (look.floatingBar) Box(Modifier.padding(horizontal = 28.dp, vertical = 10.dp).widthIn(max = 520.dp).fillMaxWidth().liquidGlass(screen)) { row() }
+    else Column {
+        val lit = look.edge == Edge.PULSE || look.edge == Edge.NEON || look.edge == Edge.GLITCH || look.edge == Edge.CHROMA
+        Box(Modifier.fillMaxWidth().height(if (lit) 1.dp else 0.5.dp).background(if (lit) look.edgeColors.first() else Ios.separator))
+        Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))) { row() }
     }
 }
 
 /* ---------- Stream tab ---------- */
 
-/** Ember glow from the oni icon's flame, behind every large title: the app's signature. */
-@Composable
-fun EmberBackdrop() {
-    val dark = isDark
-    val (g1, g2) = LocalTheme.current.p.glow     // the theme's two lights
-    Box(Modifier.fillMaxWidth().height(520.dp).drawBehind {
-        drawRect(Brush.radialGradient(
-            listOf(g1.copy(alpha = g1.alpha * if (dark) 0.42f else 0.20f), Color.Transparent),
-            center = Offset(size.width * 0.9f, 0f), radius = size.width * 1.05f))
-        drawRect(Brush.radialGradient(
-            listOf(g2.copy(alpha = g2.alpha * if (dark) 0.22f else 0.12f), Color.Transparent),
-            center = Offset(0f, size.height * 0.25f), radius = size.width * 0.8f))
-    })
-}
 
 fun platformOf(url: String) = when {
     "youtube" in url -> "YouTube"; "twitch" in url -> "Twitch"
@@ -422,8 +459,11 @@ fun StreamScreen(
     destinations: List<Destination>, activeId: String?, onSelect: (String) -> Unit, onManage: () -> Unit,
     prefs: Prefs, onToggle: () -> Unit, onPrefs: (Prefs) -> Unit, onScene: () -> Unit,
     onSuperChat: () -> Unit = {},
+    onResetLogo: () -> Unit = {},
+    onEditActive: (Destination) -> Unit = {},
 ) {
     val active = destinations.firstOrNull { it.id == activeId } ?: destinations.firstOrNull()
+    var setup by remember { mutableStateOf(false) }
     val state by StreamService.state.collectAsState()
     val bps by StreamService.lastBitrate.collectAsState()
     val since by StreamService.liveSince.collectAsState()
@@ -436,13 +476,10 @@ fun StreamScreen(
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         // Brand header: the oni mark + name + a one-line mood.
         Row(Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-            Image(painterResource(R.mipmap.ic_launcher_foreground), null, contentScale = ContentScale.Crop,
-                modifier = Modifier.size(52.dp).shadow(10.dp, RoundedCornerShape(14.dp), spotColor = Accent)
-                    .clip(RoundedCornerShape(14.dp)).background(Color.Black)
-                    .graphicsLayer { scaleX = 1.45f; scaleY = 1.45f })
+            AppLogo(prefs.logoUri, 52.dp, onClear = onResetLogo)
             Spacer(Modifier.size(14.dp))
             Column {
-                Text("Angra Streaming", fontSize = 28.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.6).sp)
+                ThemedTitle("Angra Streaming", 28.sp)
                 Text(when (state) {
                     StreamService.State.LIVE -> "You're live. Make it count."
                     StreamService.State.CONNECTING -> "Reaching the server…"
@@ -459,22 +496,25 @@ fun StreamScreen(
         SectionHeader("Stream")
         Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                StatTile(R.drawable.ic_signal, AppleGreen, if (live) "${bps / 1000}" else "—",
-                    if (live) "kbps upload" else "Upload", Modifier.weight(1f))
+                // Every tile is live: tap to set the stream up before (or during) a broadcast.
+                val open = Modifier.weight(1f).iosTap { if (active == null) onManage() else setup = true }
+                StatTile(R.drawable.ic_signal, AppleGreen,
+                    if (live) "${bps / 1000}" else active?.let { "%.1f".format(it.videoBitrate / 1e6) } ?: "Add",
+                    if (live) "kbps upload" else if (active != null) "Mbps target" else "a channel", open)
                 StatTile(R.drawable.ic_video, Color(0xFF0A84FF),
                     active?.let { "${it.height}p${it.fps}" } ?: "—",
-                    active?.let { (if (it.hevc) "HEVC" else "H.264") + " · ${it.videoBitrate / 1000} kbps" } ?: "Quality",
-                    Modifier.weight(1f))
+                    active?.let { (if (it.hevc) "HEVC" else "H.264") + " · tap to change" } ?: "Quality", open)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                val open = Modifier.weight(1f).iosTap { if (active == null) onManage() else setup = true }
                 StatTile(R.drawable.ic_timer, Color(0xFFFF9500),
                     active?.delaySeconds?.let { if (it == 0) "Off" else if (it >= 60) "${it / 60}m ${it % 60}s" else "${it}s" } ?: "—",
-                    "Stream delay", Modifier.weight(1f))
+                    "Stream delay", open)
                 StatTile(R.drawable.ic_audio, Color(0xFFBF5AF2),
                     when (prefs.audioSource) { Prefs.AUDIO_MIC -> "Mic"; Prefs.AUDIO_GAME -> "Game"; else -> "Mic + Game" },
-                    if (active?.stereo != false) "Stereo · ${(active?.audioBitrate ?: 128_000) / 1000}k" else "Mono",
-                    Modifier.weight(1f))
+                    if (active?.stereo != false) "Stereo · ${(active?.audioBitrate ?: 128_000) / 1000}k" else "Mono", open)
             }
+            if (setup && active != null) StreamSetup(active, prefs, busy, onPrefs, onEditActive) { setup = false }
         }
 
         // Control Center-style quick toggles.
@@ -495,8 +535,7 @@ fun StreamScreen(
         if (active != null) {
             Spacer(Modifier.height(12.dp))
             Row(
-                Modifier.padding(horizontal = 16.dp).fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(20.dp))
+                Modifier.padding(horizontal = 16.dp).fillMaxWidth().themed(Part.TILE)
                     .iosTap { onScene() }.padding(14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -513,13 +552,16 @@ fun StreamScreen(
             }
         }
 
+        SectionHeader("Audio mixer")
+        AudioMixer(prefs, onPrefs)
+        Footer("Starts at 100%. Go down to 0 or up to 150%; tap the percentage to return to 100%. Applies live while you stream.")
+
         BreakCard(prefs, onPrefs, live)
 
         // Super Chat alerts: paid messages from YouTube live chat, shown on stream.
         val scStatus by StreamService.superChatStatus.collectAsState()
         Row(
-            Modifier.padding(horizontal = 16.dp).padding(top = 12.dp).fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(20.dp))
+            Modifier.padding(horizontal = 16.dp).padding(top = 12.dp).fillMaxWidth().themed(Part.TILE)
                 .iosTap { onSuperChat() }.padding(14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -529,9 +571,9 @@ fun StreamScreen(
             }
             Spacer(Modifier.size(12.dp))
             Column(Modifier.weight(1f)) {
-                Text("Super Chat alerts", fontWeight = FontWeight.SemiBold)
+                Text("Chat & Super Chats", fontWeight = FontWeight.SemiBold)
                 Text(when {
-                    !prefs.superChat -> "Off · show paid YouTube messages on stream"
+                    !prefs.superChat && !prefs.showChat -> "Off · show YouTube chat and Super Chats on stream"
                     live && scStatus.isNotBlank() -> scStatus
                     prefs.ytApiKey.isBlank() -> "On · add your YouTube key to connect"
                     else -> "On · ${dev.livepipe.SuperChatCard.STYLES[prefs.alertStyle.coerceIn(0, 3)]} style, ${prefs.alertSeconds} s"
@@ -551,8 +593,7 @@ fun StreamScreen(
                 val on = d.id == active?.id
                 Column(
                     Modifier.width(156.dp).graphicsLayer { alpha = if (busy && !on) 0.4f else 1f }
-                        .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(18.dp))
-                        .border(if (on) 2.dp else 0.5.dp, if (on) Accent else Ios.separator, RoundedCornerShape(18.dp))
+                        .themed(Part.TILE, selected = on)
                         .iosTap(enabled = !busy) { onSelect(d.id) }.padding(14.dp),
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -580,13 +621,8 @@ fun StreamScreen(
 fun StudioCard(active: Destination?, state: StreamService.State, secs: Long, onToggle: () -> Unit, onManage: () -> Unit) {
     val live = state == StreamService.State.LIVE
     val busy = live || state == StreamService.State.CONNECTING
-    Column(
-        Modifier.padding(horizontal = 16.dp).fillMaxWidth()
-            .shadow(24.dp, RoundedCornerShape(28.dp), spotColor = if (live) AppleRed else Accent, ambientColor = Color.Black)
-            .background(Brush.linearGradient(listOf(Color(0xFF1C1C1E), Color(0xFF2B1510))), RoundedCornerShape(28.dp))
-            .border(0.5.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(28.dp))
-            .padding(20.dp),
-    ) {
+    val look = LocalTheme.current.p.look
+    Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().themed(Part.HERO).padding(20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(active?.let { platformOf(it.url) }?.uppercase() ?: "NO CHANNEL", color = Color.White.copy(alpha = 0.85f),
                 fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp,
@@ -610,12 +646,14 @@ fun StudioCard(active: Destination?, state: StreamService.State, secs: Long, onT
         val src = remember { MutableInteractionSource() }
         val pressed by src.collectIsPressedAsState()
         val scale by animateFloatAsState(if (pressed) 0.96f else 1f, spring(dampingRatio = 1f, stiffness = 700f), label = "go")
-        val shape = RoundedCornerShape(18.dp)
+        val shape = look.shape(Part.SMALL)
+        val outline = look.outlineButton && active != null && !busy
         Box(
             Modifier.fillMaxWidth().height(58.dp).graphicsLayer { scaleX = scale; scaleY = scale }
                 .then(when {
                     active == null -> Modifier.background(Color.White.copy(alpha = 0.14f), shape)
                     busy -> Modifier.background(AppleRed, shape)
+                    outline -> Modifier.background(Accent.copy(alpha = 0.10f), shape).border(1.dp, Accent, shape)
                     else -> Modifier.shadow(14.dp, shape, spotColor = Accent).background(EmberBrush, shape)
                 })
                 .clickable(src, indication = null) { if (active == null) onManage() else onToggle() },
@@ -626,7 +664,9 @@ fun StudioCard(active: Destination?, state: StreamService.State, secs: Long, onT
                 state == StreamService.State.CONNECTING -> "Cancel"
                 live -> "End Stream"
                 else -> "Go Live"
-            }, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.2).sp)
+            }.let { if (look.titleCaps) it.uppercase() else it }, color = if (active != null && !busy) look.onBrush else Color.White,
+                fontSize = 19.sp, fontWeight = FontWeight.SemiBold, letterSpacing = if (look.titleCaps) 2.sp else (-0.2).sp,
+                fontFamily = look.titleFont)
         }
     }
 }
@@ -639,11 +679,13 @@ fun LivePill(state: StreamService.State) {
         StreamService.State.ERROR -> "FAILED" to AppleRed
         else -> "OFFLINE" to Color.White.copy(alpha = 0.45f)
     }
-    val pulse = rememberInfiniteTransition(label = "pulse")
-    val a by pulse.animateFloat(1f, 0.25f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "a")
+    // The dot pulses only while live, and the animation exists only then: offline it would tick every frame for nothing.
+    val a = if (state == StreamService.State.LIVE)
+        rememberInfiniteTransition(label = "pulse").animateFloat(1f, 0.25f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "a")
+    else null
     Row(Modifier.background(color.copy(alpha = 0.18f), AppleShapes.capsule).padding(horizontal = 10.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(7.dp).graphicsLayer { alpha = if (state == StreamService.State.LIVE) a else 1f }
+        Box(Modifier.size(7.dp).graphicsLayer { alpha = a?.value ?: 1f }
             .background(color, CircleShape))
         Spacer(Modifier.size(6.dp))
         Text(text, color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
@@ -652,7 +694,7 @@ fun LivePill(state: StreamService.State) {
 
 @Composable
 fun StatTile(icon: Int, tint: Color, value: String, caption: String, modifier: Modifier) = Column(
-    modifier.background(MaterialTheme.colorScheme.surface, RoundedCornerShape(20.dp)).padding(14.dp),
+    modifier.themed(Part.TILE).padding(14.dp),
 ) {
     Box(Modifier.size(30.dp).background(tint, RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
         Icon(painterResource(icon), null, tint = Color.White, modifier = Modifier.size(18.dp))
@@ -690,8 +732,7 @@ private fun BreakCard(prefs: Prefs, onPrefs: (Prefs) -> Unit, live: Boolean) {
         }
     }
     Column(
-        Modifier.padding(horizontal = 16.dp).padding(top = 12.dp).fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(20.dp)).padding(14.dp),
+        Modifier.padding(horizontal = 16.dp).padding(top = 12.dp).fillMaxWidth().themed(Part.TILE).padding(14.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(34.dp).background(if (onBreak) AppleRed else Color(0xFF2C2C2E), RoundedCornerShape(9.dp)),
@@ -780,7 +821,7 @@ private fun ActionChip(a: dev.livepipe.BubbleAction, selected: Boolean, used: Bo
 fun QuickToggle(icon: Int, label: String, on: Boolean, tint: Color, modifier: Modifier, onClick: () -> Unit) {
     val bg by animateColorAsState(if (on) tint else MaterialTheme.colorScheme.surface, label = "qt")
     val fg = if (on) Color.White else MaterialTheme.colorScheme.onSurface
-    Column(modifier.aspectRatio(1f).background(bg, RoundedCornerShape(22.dp)).iosTap(onClick = onClick).padding(14.dp)) {
+    Column(modifier.aspectRatio(1f).themed(Part.TILE, tint = if (on) bg else null).iosTap(onClick = onClick).padding(14.dp)) {
         Box(Modifier.size(34.dp).background(if (on) Color.White.copy(alpha = 0.22f) else Ios.segmentTrack, CircleShape),
             contentAlignment = Alignment.Center) {
             Icon(painterResource(icon), null, tint = fg, modifier = Modifier.size(18.dp))
@@ -815,6 +856,7 @@ fun DestinationsScreen(
     if (adding || editing != null) {
         DestinationEditor(
             existing = editing,
+            taken = destinations.filter { it.id != editing?.id }.map { it.name },
             prefs = prefs, onPrefs = onPrefs,
             onCancel = { adding = false; editing = null },
             onSave = { d ->
@@ -1003,9 +1045,19 @@ fun DestinationEditor(
     onCancel: () -> Unit,
     onSave: (Destination) -> Unit,
     onDelete: (Destination) -> Unit,
+    taken: List<String> = emptyList(),               // names of the other channels (exact, case-sensitive)
 ) {
-    var name by remember { mutableStateOf(existing?.name ?: "") }
-    var url by remember { mutableStateOf(existing?.url ?: "rtmps://") }
+    // First free name for a platform: "YouTube", then "YouTube 2", "YouTube 3"…
+    fun freeName(base: String) = generateSequence(1) { it + 1 }.map { if (it == 1) base else "$base $it" }.first { it !in taken }
+    // A new channel starts on YouTube with its complete server URL; editing keeps the channel's own.
+    var platform by remember {
+        mutableStateOf(if (existing == null) PLATFORMS[0]
+            else PLATFORMS.firstOrNull { it.url.isNotBlank() && it.url == existing.url } ?: PLATFORMS.last())
+    }
+    var name by remember { mutableStateOf(existing?.name ?: freeName(PLATFORMS[0].name)) }
+    // The name follows the platform until the user types their own.
+    var autoName by remember { mutableStateOf(existing == null) }
+    var url by remember { mutableStateOf(existing?.url ?: PLATFORMS[0].url) }
     var key by remember { mutableStateOf(existing?.key ?: "") }
     var res by remember {
         mutableStateOf(RESOLUTIONS.firstOrNull { it.w == existing?.width && it.h == existing.height } ?: RESOLUTIONS[2])
@@ -1032,7 +1084,8 @@ fun DestinationEditor(
     }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        val valid = name.isNotBlank() && url.startsWith("rtmp")
+        val duplicate = name.trim() in taken
+        val valid = name.isNotBlank() && !duplicate && url.startsWith("rtmp") && url.trim().length > "rtmps://".length
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
             horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("Cancel", color = Accent, modifier = Modifier.iosTap { onCancel() })
@@ -1050,12 +1103,15 @@ fun DestinationEditor(
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             PLATFORMS.forEach { p ->
-                Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = AppleShapes.capsule,
+                val on = p == platform
+                Surface(color = if (on) Accent else MaterialTheme.colorScheme.surfaceVariant, shape = AppleShapes.capsule,
                     modifier = Modifier.iosTap {
-                        if (name.isBlank()) name = p.name
-                        if (p.url.isNotBlank()) url = p.url
+                        platform = p
+                        if (autoName || name.isBlank()) { name = freeName(p.name); autoName = true }
+                        // Kick and custom servers are per-account: clear the old platform's URL so it isn't kept by mistake.
+                        url = p.url.ifBlank { "rtmps://" }
                     }) {
-                    Text(p.name, fontSize = 15.sp, color = Accent, fontWeight = FontWeight.Medium,
+                    Text(p.name, fontSize = 15.sp, color = if (on) Color.White else Accent, fontWeight = FontWeight.Medium,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
                 }
             }
@@ -1064,12 +1120,13 @@ fun DestinationEditor(
 
         SectionHeader("Destination")
         InsetCard {
-            FieldRow("Name", name, { name = it }, "My channel")
+            FieldRow("Name", name, { name = it; autoName = false }, "My channel")
             Hairline()
             FieldRow("Server", url, { url = it }, "rtmps://…", keyboard = KeyboardType.Uri)
             Hairline()
             FieldRow("Stream key", key, { key = it }, "Paste from dashboard", secure = true)
         }
+        if (duplicate) Footer("You already have a channel named \"${name.trim()}\". Names must differ, even by one letter or its case.")
         // Only offer what this phone can actually encode; out-of-range picks snap to the nearest valid one.
         val codecs = if (caps.hevc) listOf(false, true) else listOf(false)
         val resList = RESOLUTIONS.filter { caps.supports(it, 30, hevc, portrait) }.ifEmpty { RESOLUTIONS.take(1) }
@@ -1156,13 +1213,42 @@ fun SettingsScreen(
     micDevices: List<Pair<Int, String>>,
     onPrefs: (Prefs) -> Unit,
     onPreviewBubble: (Boolean) -> Unit,
+    onPickLogo: () -> Unit = {},
+    onPinIcon: () -> Unit = {},
+    onResetLogo: () -> Unit = {},
 ) {
     var previewing by remember { mutableStateOf(dev.livepipe.BubbleService.previewing) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         LargeTitle("Settings")
 
+        SectionHeader("App icon")
+        InsetCard {
+            RowItem("Your logo") {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AppLogo(prefs.logoUri, 34.dp, onClear = onResetLogo)
+                    Spacer(Modifier.size(12.dp))
+                    Text(if (prefs.logoUri.isBlank()) "Choose" else "Change", color = Accent, modifier = Modifier.iosTap { onPickLogo() })
+                }
+            }
+            if (prefs.logoUri.isNotBlank()) {
+                Hairline()
+                RowItem("Delete my logo") { Text("Delete", color = AppleRed, modifier = Modifier.iosTap { onResetLogo() }) }
+            }
+            Hairline()
+            RowItem("Home Screen icon with your logo") { Text("Add", color = Accent, modifier = Modifier.iosTap { onPinIcon() }) }
+        }
+        Footer("Your logo replaces the oni across the app. \"Add\" puts an Angra Streaming icon with your picture on your home " +
+            "screen (your launcher asks to confirm). Deleting your logo brings the oni back and retires that home-screen icon. " +
+            "Android doesn't let apps swap their own launcher icon for a photo, so keep yours and remove the original if you like.")
+
         SectionHeader("Theme · ${paletteOf(prefs.theme).name}")
         ThemePicker(prefs.theme) { onPrefs(prefs.copy(theme = it)) }
+        Spacer(Modifier.height(14.dp))
+        InsetCard {
+            RowItem("Live theme") { IosSwitch(prefs.liveTheme, { onPrefs(prefs.copy(liveTheme = it)) }) }
+        }
+        Footer("Brings the theme to life. Turn it off and the theme stops on that exact frame. It also pauses whenever " +
+            "you leave the app or go live, so it never runs in the background. Uses a little more battery while you're in the app.")
 
         SectionHeader("Floating bubble")
         // One grouped card: toggle, what the bubble shows, its image.
@@ -1184,8 +1270,9 @@ fun SettingsScreen(
             }
             Hairline()
             RowItem("Bubble shows") {
-                Chips(listOf(false, true), prefs.bubbleShowsTimer, { if (it) "Timer" else "Icon" }, Modifier.width(140.dp)) {
-                    onPrefs(prefs.copy(bubbleShowsTimer = it))
+                Chips(listOf(0, 1, 2), if (prefs.bubbleShowsFps) 2 else if (prefs.bubbleShowsTimer) 1 else 0,
+                    { listOf("Icon", "Timer", "FPS")[it] }, Modifier.width(186.dp)) {
+                    onPrefs(prefs.copy(bubbleShowsTimer = it == 1, bubbleShowsFps = it == 2))
                 }
             }
             Hairline()
@@ -1197,9 +1284,11 @@ fun SettingsScreen(
                 }
             }
         }
-        SectionHeader("Bubble transparency · ${(prefs.bubbleTransparency * 100).toInt()}%")
+        var alphaNow by remember(prefs.bubbleTransparency) { mutableFloatStateOf(prefs.bubbleTransparency) }
+        SectionHeader("Bubble transparency · ${(alphaNow * 100).toInt()}%")
         IosSlider(prefs.bubbleTransparency, { onPrefs(prefs.copy(bubbleTransparency = it)) },
-            valueRange = 0f..Prefs.BUBBLE_MAX_TRANSPARENCY)
+            valueRange = 0f..Prefs.BUBBLE_MAX_TRANSPARENCY,
+            onLive = { alphaNow = it; dev.livepipe.BubbleService.setTransparency(it) })
         Footer("Preview places the bubble before you go live: drag it anywhere, it snaps to the nearest edge. Edge bar: an idle bubble tucks into a slim handle; tap it to pop out. Hide bubble from stream marks the bubble private, so capture can't show its content (most phones show a blank patch instead). For a clean stream on Android 14+, share \"A single app\" when going live and the bubble stays out completely. The system recording indicator always stays visible.")
 
         SectionHeader("Bubble controls")
@@ -1226,12 +1315,7 @@ fun SettingsScreen(
         }
 
         SectionHeader("Charging")
-        Chips(listOf(0, 1, 2), prefs.charging, { dev.livepipe.Charging.names[it] }) { onPrefs(prefs.copy(charging = it)) }
-        ChargingCard()
-        Footer("Normal: the stream keeps full quality and the battery gets what's left. Medium: on the charger, when the " +
-            "phone runs warm, the stream eases to 60% bitrate so charging isn't throttled. Fast: on the charger the stream " +
-            "runs at 60% (35% when warm), leaving the most power for the battery. No app can change the charger chip on a " +
-            "stock phone; charge limits like 80% and optimized charging are in your phone's battery settings.")
+        ChargingSection(prefs.charging) { onPrefs(prefs.copy(charging = it)) }
 
         SectionHeader("Network")
         InsetCard {
@@ -1252,31 +1336,68 @@ fun SettingsScreen(
     }
 }
 
-/** Live charging readout: measured watts and current, battery temperature, and how far the stream is easing. */
+/**
+ * Charging control. Shows what this phone allows (root: charger IC limit; Samsung: One UI fast-charge switches;
+ * otherwise nothing), the mode picker when it can act, and live measurements so the effect can be checked.
+ */
 @Composable
-fun ChargingCard() {
+fun ChargingSection(mode: Int, onMode: (Int) -> Unit) {
     val ctx = LocalContext.current
     var r by remember { mutableStateOf(dev.livepipe.Charging.read(ctx)) }
-    LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(2000); r = dev.livepipe.Charging.read(ctx) } }
-    val ease by dev.livepipe.StreamService.chargeEase.collectAsState()
+    var engine by remember { mutableStateOf(dev.livepipe.Charging.engine(ctx)) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(2000)
+            r = dev.livepipe.Charging.read(ctx); engine = dev.livepipe.Charging.engine(ctx)   // picks up an adb grant
+        }
+    }
+    val status by dev.livepipe.Charging.status.collectAsState()
+    val canAct = engine == E.ROOT || engine == E.SAMSUNG
+    val target = dev.livepipe.Charging.targetMa(mode, r.capacityMah)
+
+    if (canAct) Chips(listOf(0, 1, 2), mode, { dev.livepipe.Charging.names[it] }) { onMode(it) }
     InsetCard {
+        RowItem("Control") {
+            Text(when (engine) {
+                E.ROOT -> "Charger IC (root)"; E.SAMSUNG -> "One UI switches"
+                E.SAMSUNG_NEEDS_GRANT -> "Needs one-time setup"; E.NONE -> "Not available"
+            }, color = if (canAct) Accent else Ios.secondaryLabel)
+        }
+        if (engine == E.ROOT) {
+            Hairline()
+            RowItem("Limit") {
+                Text(if (target == null) "Phone's maximum" else "$target mA · ${if (mode == 0) "0.5C" else "1C"} of ${r.capacityMah} mAh",
+                    color = Ios.secondaryLabel)
+            }
+        }
+        Hairline()
         RowItem(when {
             r.charging -> "Charging · %.1f W".format(r.watts)
             r.plugged -> "On power · not charging"
-            else -> "On battery"
-        }) {
-            Text(if (r.charging) "${r.mA} mA" else "${r.level}%", color = Ios.secondaryLabel)
+            else -> "On battery · ${r.level}%"
+        }) { Text(if (r.charging) "${r.mA} mA" else "", color = Ios.secondaryLabel) }
+        // The proof: does the measured current stay under the limit the IC was given?
+        if (engine == E.ROOT && target != null && r.charging) {
+            Hairline()
+            val holding = r.mA <= target * 1.15
+            RowItem(if (holding) "Charger IC is holding the limit" else "Measured above the limit") {
+                Text(if (holding) "✓" else "!", color = if (holding) AppleGreen else AppleRed, fontWeight = FontWeight.Bold)
+            }
         }
         Hairline()
-        RowItem("Battery ${r.level}% · %.1f°C".format(r.tempC)) {
+        RowItem("Battery %d%% · %.1f°C".format(r.level, r.tempC)) {
             Text(when {
-                r.thermal >= 3 -> "Hot"; dev.livepipe.Charging.warm(r.thermal) -> "Warm"
-                r.plugged -> r.source; else -> "Cool"
+                r.thermal >= 3 -> "Hot"; dev.livepipe.Charging.warm(r.thermal) -> "Warm"; else -> "Cool"
             }, color = if (dev.livepipe.Charging.warm(r.thermal)) AppleRed else Ios.secondaryLabel)
         }
-        if (ease < 1f) {
+        if (engine == E.SAMSUNG_NEEDS_GRANT) {
             Hairline()
-            RowItem("Stream eased to ${(ease * 100).toInt()}% bitrate") { Text("for charging", color = Accent) }
+            RowItem("Copy setup command") {
+                Text("Copy", color = Accent, modifier = Modifier.iosTap {
+                    ctx.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(
+                        android.content.ClipData.newPlainText("adb", dev.livepipe.Charging.GRANT_COMMAND))
+                })
+            }
         }
         Hairline()
         RowItem("Phone battery settings") {
@@ -1285,44 +1406,126 @@ fun ChargingCard() {
             })
         }
     }
+    if (status.isNotBlank() && canAct) Footer(status)
+    Footer(when (engine) {
+        E.ROOT -> "Normal charges at 0.5C, the standard rate in Li-ion cell datasheets (half the battery's capacity per " +
+            "hour): coolest and gentlest. Medium charges at 1C. Fast hands control back to the phone's own maximum. The " +
+            "limit is written into the charger chip's kernel controls, never above the phone's stock value, and re-applied " +
+            "after every plug-in. If the reading stays above the limit, this phone's fast-charge path bypasses the kernel limit."
+        E.SAMSUNG -> "Normal turns off Fast and Super fast charging (plain 5 V, about 10 W). Medium keeps Fast charging " +
+            "(about 15 W). Fast turns both on (25–45 W with a Super fast charger). Takes effect the next time you plug in."
+        E.SAMSUNG_NEEDS_GRANT -> "Samsung lets the app switch its own fast-charging modes after a one-time permission. " +
+            "Connect the phone to a computer with USB debugging on and run:\n${dev.livepipe.Charging.GRANT_COMMAND}"
+        E.NONE -> "This phone keeps charging control inside its manufacturer firmware, out of reach of apps. Charging modes " +
+            "work on rooted phones (Magisk, KernelSU, APatch), where the app sets the charger chip's current directly, " +
+            "and on Samsung phones. Charge limits like 80% and optimized charging are in your phone's battery settings."
+    })
 }
 
-/** Theme grid in the iOS app-icon picker style: a mini app per theme, the chosen one ringed in its own tint. */
+/** Stream setup from the Stream tab: the active channel's quality, delay and audio, without opening the editor. */
+@Composable
+private fun StreamSetup(d: Destination, prefs: Prefs, busy: Boolean, onPrefs: (Prefs) -> Unit, onSave: (Destination) -> Unit, onClose: () -> Unit) {
+    val ctx = LocalContext.current
+    val caps = remember { DeviceCaps(ctx) }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
+        Column(Modifier.fillMaxWidth().themed().padding(bottom = 16.dp)) {
+            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Stream setup · ${d.name}", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("Done", color = Accent, fontWeight = FontWeight.SemiBold, modifier = Modifier.iosTap { onClose() })
+            }
+            if (busy) Footer("You're live: resolution and frame rate are locked until the stream ends. Bitrate and delay apply next time.")
+            val resList = RESOLUTIONS.filter { caps.supports(it, 30, d.hevc, d.portrait) }.ifEmpty { RESOLUTIONS.take(1) }
+            val res = resList.firstOrNull { it.w == d.width && it.h == d.height } ?: resList.last()
+            SectionHeader("Resolution")
+            Chips(resList, res, { it.toString() }) { if (!busy) onSave(d.copy(width = it.w, height = it.h)) }
+            val fpsList = FPS.filter { caps.supports(res, it, d.hevc, d.portrait) }.ifEmpty { FPS.take(1) }
+            SectionHeader("Frame rate")
+            Chips(fpsList, d.fps, { "$it fps" }) { if (!busy) onSave(d.copy(fps = it)) }
+            var kbps by remember(d.videoBitrate) { mutableFloatStateOf(d.videoBitrate / 1000f) }
+            SectionHeader("Video bitrate · ${kbps.roundToInt()} kbps")
+            IosSlider(d.videoBitrate / 1000f, { onSave(d.copy(videoBitrate = it.roundToInt() * 1000)) }, valueRange = 1000f..12000f,
+                onLive = { kbps = it })
+            SectionHeader("Stream delay")
+            Chips(listOf(0, 5, 10, 30, 60), d.delaySeconds, { if (it == 0) "Off" else if (it == 60) "1 min" else "${it}s" }) {
+                onSave(d.copy(delaySeconds = it))
+            }
+            SectionHeader("Audio source")
+            Chips(listOf(Prefs.AUDIO_MIC, Prefs.AUDIO_GAME, Prefs.AUDIO_MIX), prefs.audioSource,
+                { when (it) { Prefs.AUDIO_MIC -> "Mic"; Prefs.AUDIO_GAME -> "Game"; else -> "Both" } }) { onPrefs(prefs.copy(audioSource = it)) }
+        }
+    }
+}
+
+/** Theme grid in the iOS app-icon picker style: each tile is the theme running live in miniature. */
 @Composable
 fun ThemePicker(selected: String, onPick: (String) -> Unit) {
     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Palettes.chunked(4).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                row.forEach { p ->
-                    val on = p.id == selected
-                    val card = if (p.dark == null) Color(0xFF1C1C1E) else p.card
-                    Column(Modifier.weight(1f).iosTap { onPick(p.id) }, horizontalAlignment = Alignment.CenterHorizontally) {
-                        Box(Modifier.fillMaxWidth().aspectRatio(0.72f)
-                            .border(if (on) 2.5.dp else 0.5.dp, if (on) p.accent else Ios.separator, RoundedCornerShape(16.dp))
-                            .padding(if (on) 4.dp else 0.dp).clip(RoundedCornerShape(if (on) 12.dp else 16.dp))
-                            .background(p.bg)
-                            .drawBehind {
-                                drawRect(Brush.radialGradient(listOf(p.glow[0].copy(alpha = p.glow[0].alpha * 0.55f), Color.Transparent),
-                                    center = Offset(size.width, 0f), radius = size.width * 1.2f))
-                            }
-                            .padding(8.dp)) {
-                            // Mini app: large title, two cards, the primary button.
-                            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                                Box(Modifier.fillMaxWidth(0.6f).height(6.dp)
-                                    .background(if (p.dark == false) Color.Black else Color.White, RoundedCornerShape(3.dp)))
-                                Box(Modifier.fillMaxWidth().height(18.dp).background(card, RoundedCornerShape(5.dp)))
-                                Box(Modifier.fillMaxWidth().height(10.dp).background(card, RoundedCornerShape(5.dp)))
-                            }
-                            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(14.dp)
-                                .background(Brush.linearGradient(p.brush), RoundedCornerShape(50)))
-                        }
-                        Text(p.name, fontSize = 12.sp, maxLines = 1, color = if (on) Accent else MaterialTheme.colorScheme.onBackground,
-                            fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal, modifier = Modifier.padding(top = 6.dp))
-                    }
-                }
+                row.forEach { p -> ThemeTile(p, p.id == selected, Modifier.weight(1f)) { onPick(p.id) } }
                 repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
+    }
+}
+
+@Composable
+private fun ThemeTile(p: Palette, on: Boolean, modifier: Modifier, onPick: () -> Unit) {
+    val main = LocalScene.current ?: return
+    val dark = p.dark ?: androidx.compose.foundation.isSystemInDarkTheme()
+    // Previews are still frames: 20 live scenes at once would cost real battery for no benefit.
+    val host = remember(main) { SceneHost() }
+    Column(modifier.iosTap(onClick = onPick), horizontalAlignment = Alignment.CenterHorizontally) {
+        MaterialTheme(colorScheme = schemeFor(p, dark)) {
+            CompositionLocalProvider(LocalTheme provides Themed(p, dark), LocalScene provides host) {
+                Box(
+                    Modifier.fillMaxWidth().aspectRatio(0.62f)
+                        .border(if (on) 2.5.dp else 0.5.dp, if (on) p.accent else Ios.separator, RoundedCornerShape(18.dp))
+                        .padding(if (on) 4.dp else 0.dp).clip(RoundedCornerShape(14.dp))
+                        .onGloballyPositioned {
+                            host.origin = it.positionInRoot()
+                            host.size = androidx.compose.ui.geometry.Size(it.size.width.toFloat(), it.size.height.toFloat())
+                        }
+                        .drawBehind { drawScene(p, host.size, dark) }
+                        .padding(7.dp),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(Modifier.fillMaxWidth().height(24.dp).themed(Part.SMALL))
+                        Box(Modifier.fillMaxWidth(0.7f).height(14.dp).themed(Part.SMALL))
+                    }
+                    Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(14.dp)
+                        .then(if (p.look.outlineButton) Modifier.border(1.dp, p.accent, p.look.shape(Part.SMALL))
+                            else Modifier.background(Brush.linearGradient(p.brush), p.look.shape(Part.SMALL))))
+                }
+            }
+        }
+        Text(p.name, fontSize = 12.sp, maxLines = 1, color = if (on) Accent else MaterialTheme.colorScheme.onBackground,
+            fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal, modifier = Modifier.padding(top = 6.dp))
+    }
+}
+
+/** The app logo: the user's own picture, or the Angra oni. */
+@Composable
+fun AppLogo(uri: String, size: androidx.compose.ui.unit.Dp, onClear: (() -> Unit)? = null) {
+    val ctx = LocalContext.current
+    val bmp = remember(uri) {
+        uri.takeIf { it.isNotBlank() }?.let { u ->
+            runCatching { ctx.contentResolver.openInputStream(android.net.Uri.parse(u))?.use { android.graphics.BitmapFactory.decodeStream(it)?.asImageBitmap() } }.getOrNull()
+        }
+    }
+    val shape = RoundedCornerShape(size * 0.27f)
+    val m = Modifier.size(size).shadow(10.dp, shape, spotColor = Accent).clip(shape).background(Color.Black)
+    Box {
+        if (bmp != null) Image(bmp, null, m, contentScale = ContentScale.Crop)
+        else Image(painterResource(R.mipmap.ic_launcher_foreground), null, contentScale = ContentScale.Crop,
+            modifier = m.graphicsLayer { scaleX = 1.45f; scaleY = 1.45f })
+        // A small close button on a custom logo: one tap removes it and the oni comes back.
+        if (bmp != null && onClear != null) Box(
+            Modifier.align(Alignment.TopEnd).offset(x = 6.dp, y = (-6).dp).size(20.dp)
+                .background(Color(0xE6000000), CircleShape).border(1.dp, Color.White.copy(alpha = 0.7f), CircleShape)
+                .iosTap { onClear() },
+            contentAlignment = Alignment.Center,
+        ) { Text("✕", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold) }
     }
 }
 

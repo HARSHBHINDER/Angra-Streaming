@@ -3,5 +3,5 @@
     android:targetCellWidth="4" android:targetCellHeight="1"
     android:maxResizeWidth="520dp" android:maxResizeHeight="110dp"
     android:resizeMode="horizontal" android:widgetCategory="home_screen" android:updatePeriodMillis="0"
-    android:initialLayout="@layout/widget_strip" android:previewLayout="@layout/widget_strip"
+    android:initialLayout="@layout/widget_strip" android:previewImage="@drawable/wg_preview_strip"
     android:description="@string/widget_strip_desc" />

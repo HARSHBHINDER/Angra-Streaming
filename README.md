@@ -79,4 +79,4 @@ base64 -w0 app/angra-release.jks     # paste output as KEYSTORE_BASE64
 
 ## License
 
-MIT — free for anyone. See [LICENSE](LICENSE).
+MIT — free for anyone. See [LICENSE](LICENSE). Bundled theme fonts: [NOTICE-fonts.md](NOTICE-fonts.md) (OFL / Apache 2.0).

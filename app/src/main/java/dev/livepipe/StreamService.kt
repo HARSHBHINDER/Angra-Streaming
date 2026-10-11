@@ -5,17 +5,13 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Environment
 import android.os.IBinder
-import android.os.PowerManager
 import android.os.SystemClock
 import androidx.core.content.IntentCompat
 import com.pedro.common.ConnectChecker
@@ -63,16 +59,15 @@ class StreamService : Service(), ConnectChecker {
     private var recPaused = false
     private var overlayHidden = false
     private var dataSaver = false
-    private var chargeMode = Charging.NORMAL
-    private var ceiling = 0                         // bitrate ceiling in force (channel bitrate x data saver x charging)
-    private val power = object : BroadcastReceiver() { override fun onReceive(c: Context, i: Intent) = applyCeiling() }
-    private val thermal by lazy { PowerManager.OnThermalStatusChangedListener { applyCeiling() } }   // API 29+
     private var zoomed = false
     private var sceneDest: Destination? = null
     private var destName = ""
     // Super Chat alerts: one card at a time on its own layer, queued.
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     private var chat: YouTubeChat? = null
+    private var chatLayer: ImageFilterRender? = null
+    private val chatLines = ArrayDeque<ChatLine>()
+    private var showChat = false
     private var alertLayer: ImageFilterRender? = null
     private val alertQueue = ArrayDeque<SuperChat>()
     private var alertBusy = false
@@ -132,10 +127,6 @@ class StreamService : Service(), ConnectChecker {
         val prefs = store.prefsBundle
         maxBitrate = dest.videoBitrate
         adaptive = prefs.adaptiveBitrate
-        chargeMode = prefs.charging
-        // Battery broadcasts arrive on plug/unplug and temperature changes; thermal status covers the rest.
-        registerReceiver(power, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        if (Build.VERSION.SDK_INT >= 29) getSystemService(PowerManager::class.java).addThermalStatusListener(mainExecutor, thermal)
         destId = dest.id; this.audio = audio; canvasAspect = dest.canvasAspect(); destName = dest.name
         // Layer order = filter order: screen crop first, then overlay, then facecam on top.
         crop = CropFilterRender().also { s.getGlInterface().addFilter(it) }
@@ -147,9 +138,8 @@ class StreamService : Service(), ConnectChecker {
         applyVolumes(prefs)
         s.startStream(dest.endpoint())
         superChatStatus.value = ""
-        if (prefs.superChat && prefs.ytApiKey.isNotBlank() && dest.ytSource.isNotBlank()) {
-            chat = YouTubeChat(prefs.ytApiKey, dest.ytSource, { e -> main.post { queueAlert(e) } }, { superChatStatus.value = it })
-        }
+        showChat = prefs.showChat
+        if ((prefs.superChat || prefs.showChat) && prefs.ytApiKey.isNotBlank() && dest.ytSource.isNotBlank()) startChat(prefs, dest)
         live = this
         // OBS-style stream delay: buffers encoded output N seconds before sending. ponytail: cheap for
         // short delays (~bitrate × seconds of RAM); long delays at high bitrate cost real memory.
@@ -165,41 +155,28 @@ class StreamService : Service(), ConnectChecker {
         return START_STICKY
     }
 
-    /** Re-derives the bitrate ceiling from data saver and the charging mode; applies it when it changes. */
-    private fun applyCeiling() {
-        if (maxBitrate <= 0) return
-        val r = Charging.read(this)
-        val f = Charging.bitrateFactor(chargeMode, r.plugged, Charging.warm(r.thermal))
-        val b = (maxBitrate * f * (if (dataSaver) 0.5f else 1f)).toInt()
-        chargeEase.value = f
-        if (b == ceiling) return
-        ceiling = b
-        bitrateAdapter?.setMaxBitrate(b)
-        stream?.setVideoBitrateOnFly(b)
-    }
-
     private fun stopEverything() {
-        runCatching { unregisterReceiver(power) }
-        if (Build.VERSION.SDK_INT >= 29) getSystemService(PowerManager::class.java).removeThermalStatusListener(thermal)
-        ceiling = 0; maxBitrate = 0; chargeEase.value = 1f
         BubbleService.stop(this)
         chat?.stop(); chat = null
         main.removeCallbacksAndMessages(null)
         alertQueue.clear(); alertBusy = false; alertLayer = null; superChatStatus.value = ""
+        chatLayer = null; chatLines.clear(); showChat = false
         facecam?.stop(); facecam = null
-        stream?.run {
-            if (isRecording) stopRecord()
-            if (isStreaming) stopStream()
-            release()
-        }
-        projection?.stop()
-        if (live === this) live = null
+        // Detach first: stopStream() calls back onDisconnect(), which lands here again.
+        val s = stream; val mp = projection
         stream = null; projection = null; bitrateAdapter = null
+        if (live === this) live = null
+        s?.run {
+            runCatching { if (isRecording) stopRecord() }
+            runCatching { if (isStreaming) stopStream() }
+            runCatching { release() }
+        }
+        mp?.stop()
         audio = null; crop = null; overlay = null; facecamLayer = null; destId = null; micMuted = false
         breakLayers = emptyList(); onBreak.value = false
         gameMuted = false; recPaused = false; overlayHidden = false; dataSaver = false; zoomed = false; sceneDest = null
         Widgets.refresh(this)
-        state.value = State.IDLE; lastBitrate.value = 0L; liveSince.value = 0L
+        state.value = State.IDLE; lastBitrate.value = 0L; liveSince.value = 0L; fps.value = 0
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -279,6 +256,7 @@ class StreamService : Service(), ConnectChecker {
             it.setScale(d.overlayW * 100, h * 100)
             it.setPosition((d.overlayX - d.overlayW / 2) * 100, (d.overlayY - h / 2) * 100)
         }
+        placeChat(d)
         facecamLayer?.let {
             val f = d.facecamScale.coerceIn(10, 60) / 100f
             it.setScale(f * 100, f * 100)
@@ -292,6 +270,48 @@ class StreamService : Service(), ConnectChecker {
             is MicrophoneSource -> a.microphoneVolume = if (micMuted) 0f else p.micVolume
             is InternalAudioSource -> a.internalVolume = if (gameMuted) 0f else p.gameVolume
             else -> Unit
+        }
+    }
+
+    /** One YouTube poll serves both: Super Chats go to the alert queue, ordinary messages to the chat box. */
+    private fun startChat(p: Prefs, d: Destination) {
+        chat?.stop()
+        chat = YouTubeChat(p.ytApiKey, d.ytSource,
+            { e -> main.post { if (Store(this).prefsBundle.superChat) queueAlert(e) } },
+            { superChatStatus.value = it },
+            { l -> main.post { addChat(l) } })
+    }
+
+    private fun addChat(l: ChatLine) {
+        chatLines.addLast(l)
+        while (chatLines.size > 8) chatLines.removeFirst()
+        if (showChat) drawChat()
+    }
+
+    private fun drawChat() {
+        val s = stream ?: return
+        val d = sceneDest ?: return
+        val f = chatLayer ?: ImageFilterRender().also { s.getGlInterface().addFilter(it); chatLayer = it }
+        f.setImage(ChatBox.render(chatLines.toList()))
+        f.alpha = if (showChat && chatLines.isNotEmpty()) 1f else 0f
+        placeChat(d)
+    }
+
+    private fun placeChat(d: Destination) {
+        chatLayer?.let {
+            val h = d.chatW * canvasAspect * ChatBox.H / ChatBox.W
+            it.setScale(d.chatW * 100, h * 100)
+            it.setPosition((d.chatX - d.chatW / 2) * 100, (d.chatY - h / 2) * 100)
+        }
+    }
+
+    /** Frames per second actually sent to the server, once a second (for the bubble's FPS mode). */
+    private var sentFrames = 0L
+    private val fpsTick = object : Runnable {
+        override fun run() {
+            val n = runCatching { stream?.getStreamClient()?.getSentVideoFrames() }.getOrNull() ?: return
+            fps.value = (n - sentFrames).toInt().coerceIn(0, 240); sentFrames = n
+            main.postDelayed(this, 1000)
         }
     }
 
@@ -392,11 +412,13 @@ class StreamService : Service(), ConnectChecker {
     override fun onConnectionStarted(url: String) = Unit
     override fun onConnectionSuccess() {
         state.value = State.LIVE
+        sentFrames = runCatching { stream?.getStreamClient()?.getSentVideoFrames() }.getOrNull() ?: 0L
+        main.postDelayed(fpsTick, 1000)
         goForeground("LIVE")
         Widgets.refresh(this)
         if (adaptive) bitrateAdapter = BitrateAdapter { bps ->
             stream?.setVideoBitrateOnFly(bps)
-        }.apply { setMaxBitrate(ceiling.takeIf { it > 0 } ?: maxBitrate) }
+        }.apply { setMaxBitrate(maxBitrate) }
     }
     override fun onNewBitrate(bitrate: Long) {
         lastBitrate.value = bitrate              // feeds the live latency/health meter on the Stream tab
@@ -476,7 +498,8 @@ class StreamService : Service(), ConnectChecker {
         fun toggleDataSaver() {
             live?.run {
                 dataSaver = !dataSaver
-                applyCeiling()
+                val b = if (dataSaver) maxBitrate / 2 else maxBitrate
+                bitrateAdapter?.setMaxBitrate(b); stream?.setVideoBitrateOnFly(b)
             }
         }
 
@@ -508,11 +531,22 @@ class StreamService : Service(), ConnectChecker {
         /** Super Chat connection status for the Super Chat screen ("Connected…", errors); empty when off. */
         val superChatStatus = MutableStateFlow("")
 
-        /** Share of the channel bitrate the charging mode currently allows (1 = not easing). */
-        val chargeEase = MutableStateFlow(1f)
+        /** Video frames per second reaching the server while live; 0 otherwise. */
+        val fps = MutableStateFlow(0)
 
-        /** Charging mode changed in Settings mid-stream. */
-        fun setChargingMode(mode: Int) { live?.run { chargeMode = mode; applyCeiling() } }
+        /** Chat or Super Chat toggled mid-stream: show/hide the box, connect if nothing was listening yet. */
+        fun refreshChat() {
+            live?.run {
+                val p = Store(this).prefsBundle
+                showChat = p.showChat
+                val d = sceneDest
+                if (chat == null && (p.superChat || p.showChat) && p.ytApiKey.isNotBlank() && d != null && d.ytSource.isNotBlank()) startChat(p, d)
+                if (chatLines.isNotEmpty()) drawChat()
+            }
+        }
+
+        /** Sample messages in the chat box on the live stream, to check placement. */
+        fun testChat() { live?.run { showChat = true; ChatBox.sample().forEach { addChat(it.copy(id = "test-${System.nanoTime()}")) } } }
 
         /** Plays a sample card on the live stream, so placement and style can be checked on air. */
         fun testSuperChat(tier: Int) { live?.queueAlert(SuperChatCard.sample(tier).copy(id = "test-${System.nanoTime()}")) }

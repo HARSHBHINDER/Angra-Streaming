@@ -1,19 +1,21 @@
 package dev.livepipe
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ChargingTest {
-    @Test fun nothingEasesOffTheCharger() {
-        for (m in 0..2) for (w in listOf(false, true)) assertEquals(1f, Charging.bitrateFactor(m, plugged = false, warm = w))
+    @Test fun targetsFollowCRate() {
+        assertEquals(2250, Charging.targetMa(Charging.NORMAL, 4500))   // 0.5C
+        assertEquals(4500, Charging.targetMa(Charging.MEDIUM, 4500))   // 1C
+        assertNull(Charging.targetMa(Charging.FAST, 4500))             // stock maximum
+        assertEquals(500, Charging.targetMa(Charging.NORMAL, 800))     // floor
     }
 
-    @Test fun modesEaseInOrder() {
-        assertEquals(1f, Charging.bitrateFactor(Charging.NORMAL, true, true))
-        assertEquals(1f, Charging.bitrateFactor(Charging.MEDIUM, true, false))
-        assertEquals(0.6f, Charging.bitrateFactor(Charging.MEDIUM, true, true))
-        assertEquals(0.6f, Charging.bitrateFactor(Charging.FAST, true, false))
-        assertEquals(0.35f, Charging.bitrateFactor(Charging.FAST, true, true))
+    @Test fun capacityFromChargeCounterInEitherUnit() {
+        assertEquals(4500, Charging.capacityMah(3_600_000, 80))        // spec: µAh
+        assertEquals(4500, Charging.capacityMah(3600, 80))             // firmware reporting mAh
+        assertEquals(4000, Charging.capacityMah(0, 80))                // unknown: typical phone
     }
 
     @Test fun currentUnitsAreNormalisedToMilliamps() {

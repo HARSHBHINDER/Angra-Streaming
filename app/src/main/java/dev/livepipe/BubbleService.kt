@@ -53,6 +53,7 @@ class BubbleService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var startElapsed = 0L
     private var showsTimer = false
+    private var showsFps = false                       // shows the frames per second actually sent
     private var edgeHide = true
     private var tucked = false
     private var anim: ValueAnimator? = null
@@ -78,7 +79,7 @@ class BubbleService : Service() {
 
     private val tick = object : Runnable {
         override fun run() {
-            timer.text = clock()
+            timer.text = if (showsFps) "${StreamService.fps.value} fps" else clock()
             handler.postDelayed(this, 1000)
         }
     }
@@ -93,6 +94,7 @@ class BubbleService : Service() {
 
     @Suppress("ClickableViewAccessibility")
     override fun onCreate() {
+        self = this
         super.onCreate()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         icon = ImageView(this).apply {
@@ -107,10 +109,6 @@ class BubbleService : Service() {
         }
         root = FrameLayout(this).apply {
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0xFF111111.toInt()) }
-            foreground = GradientDrawable().apply {                 // ember ring drawn over the image
-                shape = GradientDrawable.OVAL
-                setStroke(dp(2), ACCENT)
-            }
             clipToOutline = true
             addView(icon, FrameLayout.LayoutParams(size, size))
             addView(timer, FrameLayout.LayoutParams(size, size))
@@ -134,6 +132,7 @@ class BubbleService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startElapsed = intent?.getLongExtra(EXTRA_START, 0L) ?: 0L        // 0 = preview, no stream yet
         showsTimer = intent?.getBooleanExtra(EXTRA_TIMER, false) ?: false
+        showsFps = intent?.getBooleanExtra(EXTRA_FPS, false) ?: false
         edgeHide = intent?.getBooleanExtra(EXTRA_EDGE_HIDE, true) ?: true
         val transparency = intent?.getFloatExtra(EXTRA_ALPHA, 0.2f) ?: 0.2f
         // Clamp so the bubble can go very faint but never fully gone.
@@ -151,7 +150,7 @@ class BubbleService : Service() {
 
     private fun render() {
         handler.removeCallbacks(tick)
-        if (showsTimer) {
+        if (showsTimer || showsFps) {
             icon.visibility = View.GONE; timer.visibility = View.VISIBLE
             handler.post(tick)
         } else {
@@ -497,7 +496,7 @@ class BubbleService : Service() {
             BubbleAction.DATA_SAVER -> StreamService.toggleDataSaver()
             BubbleAction.ZOOM -> StreamService.toggleZoom()
             BubbleAction.TIMER -> {
-                showsTimer = !showsTimer; render()
+                showsTimer = !showsTimer; showsFps = false; render()
                 Store(this).let { it.prefsBundle = it.prefsBundle.copy(bubbleShowsTimer = showsTimer) }
             }
             BubbleAction.HIDE -> {
@@ -539,6 +538,7 @@ class BubbleService : Service() {
         else Point().also { @Suppress("DEPRECATION") wm.defaultDisplay.getRealSize(it) }.let { it.x to it.y }
 
     override fun onDestroy() {
+        if (self === this) self = null
         stage?.let { runCatching { wm.removeView(it) } }; stage = null
         pulse?.cancel()
         handler.removeCallbacksAndMessages(null); anim?.cancel()
@@ -551,6 +551,7 @@ class BubbleService : Service() {
     companion object {
         const val EXTRA_START = "start"
         const val EXTRA_TIMER = "timer"
+        const val EXTRA_FPS = "fps"
         const val EXTRA_ALPHA = "alpha"
         const val EXTRA_IMAGE = "image"
         const val EXTRA_EDGE_HIDE = "edgeHide"
@@ -578,10 +579,22 @@ class BubbleService : Service() {
 
         @Volatile var previewing = false
             private set
+        @Volatile private var self: BubbleService? = null
+
+        /** Live transparency while the bubble is showing (preview or stream), so the slider can be judged by eye. */
+        fun setTransparency(t: Float) {
+            val s = self ?: return
+            s.handler.post {
+                if (!s::root.isInitialized) return@post
+                s.root.alpha = (1f - t.coerceIn(0f, Prefs.BUBBLE_MAX_TRANSPARENCY)).coerceAtLeast(0.05f)
+                if (s.tucked) s.snap(animate = true) else s.scheduleTuck()
+            }
+        }
 
         private fun intent(ctx: Context, p: Prefs, startElapsed: Long) = Intent(ctx, BubbleService::class.java)
             .putExtra(EXTRA_START, startElapsed)
             .putExtra(EXTRA_TIMER, p.bubbleShowsTimer)
+            .putExtra(EXTRA_FPS, p.bubbleShowsFps)
             .putExtra(EXTRA_ALPHA, p.bubbleTransparency)
             .putExtra(EXTRA_IMAGE, p.bubbleImageUri)
             .putExtra(EXTRA_EDGE_HIDE, p.bubbleEdgeHide)

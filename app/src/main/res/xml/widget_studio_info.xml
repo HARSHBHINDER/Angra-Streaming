@@ -3,5 +3,5 @@
     android:targetCellWidth="2" android:targetCellHeight="2"
     android:maxResizeWidth="250dp" android:maxResizeHeight="250dp"
     android:resizeMode="horizontal|vertical" android:widgetCategory="home_screen" android:updatePeriodMillis="0"
-    android:initialLayout="@layout/widget_studio" android:previewLayout="@layout/widget_studio"
+    android:initialLayout="@layout/widget_studio" android:previewImage="@drawable/wg_preview_studio"
     android:description="@string/widget_studio_desc" />

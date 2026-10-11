@@ -70,6 +70,7 @@ private const val SCREEN = 0
 private const val OVERLAY = 1
 private const val FACECAM = 2
 private const val ALERTS = 3
+private const val CHAT = 4
 
 /**
  * OBS-style scene editor. The canvas is the real stream shape (e.g. 16:9 for YouTube), not the phone's.
@@ -81,10 +82,11 @@ fun SceneEditor(
     draft: Destination, prefs: Prefs, onPrefs: (Prefs) -> Unit,
     onCancel: () -> Unit, onDone: (Destination) -> Unit,
     alerts: Boolean = false,                       // open with the Super Chat alert layer selected
+    chat: Boolean = false,                         // ...or the live chat box
 ) {
     val ctx = LocalContext.current
     var d by remember { mutableStateOf(draft) }
-    var layer by remember { mutableIntStateOf(if (alerts) ALERTS else SCREEN) }
+    var layer by remember { mutableIntStateOf(if (chat) CHAT else if (alerts) ALERTS else SCREEN) }
     var fcScale by remember { mutableFloatStateOf(draft.facecamScale.toFloat()) }   // float so pinches accumulate
     val sourceAspect = remember(d.portrait) { phoneAspect(ctx, d.portrait) }
     val canvasAspect = d.canvasAspect()
@@ -109,6 +111,9 @@ fun SceneEditor(
     }
     val alertAspect = alertBmp.width.toFloat() / alertBmp.height
     val showAlerts = prefs.superChat || layer == ALERTS
+    val chatBmp = remember { dev.livepipe.ChatBox.render(dev.livepipe.ChatBox.sample()).asImageBitmap() }
+    val chatAspect = dev.livepipe.ChatBox.W.toFloat() / dev.livepipe.ChatBox.H
+    val showChat = prefs.showChat || layer == CHAT
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).verticalScroll(rememberScrollState())) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
@@ -136,8 +141,10 @@ fun SceneEditor(
                             val f = fcScale / 100f
                             val oh = Scene.overlayH(c.overlayW, overlayAspect, canvasAspect)
                             val ah = c.alertW * canvasAspect / alertAspect
+                            val chh = c.chatW * canvasAspect / chatAspect
                             layer = when {
                                 showAlerts && abs(x - c.alertX) < c.alertW / 2 && abs(y - c.alertY) < ah / 2 -> ALERTS
+                                showChat && abs(x - c.chatX) < c.chatW / 2 && abs(y - c.chatY) < chh / 2 -> CHAT
                                 c.facecam && abs(x - c.facecamX) < f / 2 && abs(y - c.facecamY) < f / 2 -> FACECAM
                                 c.overlayUri.isNotBlank() && abs(x - c.overlayX) < c.overlayW / 2 &&
                                     abs(y - c.overlayY) < oh / 2 -> OVERLAY
@@ -156,6 +163,8 @@ fun SceneEditor(
                                     overlayW = (c.overlayW * zoom).coerceIn(0.05f, 2f))
                                 ALERTS -> c.copy(alertX = (c.alertX + dx).coerceIn(0f, 1f), alertY = (c.alertY + dy).coerceIn(0f, 1f),
                                     alertW = (c.alertW * zoom).coerceIn(0.15f, 0.9f))
+                                CHAT -> c.copy(chatX = (c.chatX + dx).coerceIn(0f, 1f), chatY = (c.chatY + dy).coerceIn(0f, 1f),
+                                    chatW = (c.chatW * zoom).coerceIn(0.15f, 0.8f))
                                 FACECAM -> {
                                     fcScale = (fcScale * zoom).coerceIn(10f, 60f)
                                     c.copy(facecamX = (c.facecamX + dx).coerceIn(0f, 1f), facecamY = (c.facecamY + dy).coerceIn(0f, 1f),
@@ -196,6 +205,13 @@ fun SceneEditor(
                             modifier = Modifier.fillMaxSize())
                     }
                 }
+                if (showChat) {
+                    val chh = d.chatW * canvasAspect / chatAspect
+                    LayerBox(d.chatX - d.chatW / 2, d.chatY - chh / 2, d.chatW, chh, w, h, layer == CHAT) {
+                        androidx.compose.foundation.Image(chatBmp, "Live chat", contentScale = androidx.compose.ui.layout.ContentScale.FillBounds,
+                            modifier = Modifier.fillMaxSize())
+                    }
+                }
                 if (d.facecam) {
                     val f = fcScale / 100f
                     LayerBox(d.facecamX - f / 2, d.facecamY - f / 2, f, f, w, h, layer == FACECAM) {
@@ -211,7 +227,7 @@ fun SceneEditor(
 
         // ---- Layer controls ----
         SectionHeader("Layer")
-        Chips(listOf(SCREEN, OVERLAY, FACECAM, ALERTS), layer, { listOf("Screen", "Overlay", "Facecam", "Alerts")[it] }) { layer = it }
+        Chips(listOf(SCREEN, OVERLAY, FACECAM, ALERTS, CHAT), layer, { listOf("Screen", "Overlay", "Facecam", "Alerts", "Chat")[it] }) { layer = it }
         Spacer(Modifier.height(10.dp))
         when (layer) {
             SCREEN -> {
@@ -252,6 +268,11 @@ fun SceneEditor(
                 }
                 Footer("PNG, JPG, WebP or animated GIF, kept at its own shape (never stretched). Drag it past the edges if you like — only what's inside the frame is streamed. The image is copied into the app.")
             }
+            CHAT -> {
+                SectionHeader("Size · ${(d.chatW * 100).roundToInt()}% of width")
+                IosSlider(d.chatW, { d = d.copy(chatW = it) }, valueRange = 0.15f..0.8f)
+                Footer("Where your live chat appears on stream. Turn it on in Chat & Super Chats on the Stream tab.")
+            }
             ALERTS -> {
                 SectionHeader("Size · ${(d.alertW * 100).roundToInt()}% of width")
                 IosSlider(d.alertW, { d = d.copy(alertW = it) }, valueRange = 0.15f..0.9f)
@@ -269,15 +290,7 @@ fun SceneEditor(
 
         // ---- Audio mixer ----
         SectionHeader("Audio mixer")
-        InsetCard {
-            MixerRow(R.drawable.ic_mic, "Microphone", prefs.micVolume, prefs.audioSource != Prefs.AUDIO_GAME) {
-                val p = prefs.copy(micVolume = it); onPrefs(p); StreamService.updateVolumes(p)
-            }
-            Hairline()
-            MixerRow(R.drawable.ic_audio, "Game & system", prefs.gameVolume, prefs.audioSource != Prefs.AUDIO_MIC) {
-                val p = prefs.copy(gameVolume = it); onPrefs(p); StreamService.updateVolumes(p)
-            }
-        }
+        AudioMixer(prefs, onPrefs)
         Footer("Changes apply instantly, even while live. Audio source (Mic / Game / Both) is in Settings.")
         Spacer(Modifier.height(32.dp))
     }
@@ -300,8 +313,24 @@ private fun LayerBox(
     }
 }
 
+/** Mic and game/system volume, 0–150% from a 100% start; moves the live mix while dragging, saves on release. */
 @Composable
-private fun MixerRow(icon: Int, label: String, value: Float, enabled: Boolean, onChange: (Float) -> Unit) {
+internal fun AudioMixer(prefs: Prefs, onPrefs: (Prefs) -> Unit) = InsetCard {
+    MixerRow(R.drawable.ic_mic, "Microphone", prefs.micVolume, prefs.audioSource != Prefs.AUDIO_GAME,
+        onLive = { StreamService.updateVolumes(prefs.copy(micVolume = it)) }) {
+        val p = prefs.copy(micVolume = it); onPrefs(p); StreamService.updateVolumes(p)
+    }
+    Hairline()
+    MixerRow(R.drawable.ic_audio, "Game & system", prefs.gameVolume, prefs.audioSource != Prefs.AUDIO_MIC,
+        onLive = { StreamService.updateVolumes(prefs.copy(gameVolume = it)) }) {
+        val p = prefs.copy(gameVolume = it); onPrefs(p); StreamService.updateVolumes(p)
+    }
+    Spacer(Modifier.height(8.dp))
+}
+
+@Composable
+internal fun MixerRow(icon: Int, label: String, value: Float, enabled: Boolean, onLive: (Float) -> Unit = {}, onChange: (Float) -> Unit) {
+    var now by remember(value) { mutableFloatStateOf(value) }
     Column(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 4.dp)) {
         Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(28.dp).background(if (enabled) Accent else Ios.switchOff, RoundedCornerShape(7.dp)),
@@ -310,8 +339,10 @@ private fun MixerRow(icon: Int, label: String, value: Float, enabled: Boolean, o
             }
             Spacer(Modifier.width(12.dp))
             Text(label, Modifier.weight(1f))
-            Text(if (!enabled) "Off" else if (value == 0f) "Muted" else "${(value * 100).roundToInt()}%",
-                color = Ios.secondaryLabel, fontSize = 15.sp)
+            // Tap the level to return to 100%.
+            Text(if (!enabled) "Off" else if (now == 0f) "Muted" else "${(now * 100).roundToInt()}%",
+                color = if (enabled && now != 1f) Accent else Ios.secondaryLabel, fontSize = 15.sp,
+                modifier = Modifier.iosTap(enabled) { onChange(1f) })
             Spacer(Modifier.width(10.dp))
             // Quick mute: tap toggles between silent and 100%.
             Box(Modifier.size(28.dp).background(Ios.segmentTrack, CircleShape).iosTap(enabled) { onChange(if (value == 0f) 1f else 0f) },
@@ -320,7 +351,7 @@ private fun MixerRow(icon: Int, label: String, value: Float, enabled: Boolean, o
             }
         }
         Box(Modifier.alpha(if (enabled) 1f else 0.4f)) {
-            IosSlider(value, { if (enabled) onChange(it) }, valueRange = 0f..1.5f)
+            IosSlider(value, { if (enabled) onChange(it) }, valueRange = 0f..1.5f, onLive = { if (enabled) { now = it; onLive(it) } })
         }
     }
 }

@@ -2,10 +2,14 @@ package dev.livepipe
 
 import android.app.Activity
 import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.SystemClock
+import android.view.View
 import android.widget.FrameLayout
+import java.io.File
 import android.widget.LinearLayout
 import android.widget.ScrollView
 
@@ -40,6 +44,20 @@ class WidgetGalleryActivity : Activity() {
             R.layout.widget_medium to (328 to 160), R.layout.widget_dashboard to (328 to 340),
         )
         val d = resources.displayMetrics.density
+        // --ez export true: writes each widget as a transparent PNG (files/previews/<layout>.png) for the picker previews.
+        if (intent.getBooleanExtra("export", false)) {
+            val out = getExternalFilesDir("previews")!!
+            sizes.forEach { (layout, wh) ->
+                val w = (wh.first * d).toInt(); val h = (wh.second * d).toInt()
+                val v = Widgets.views(ctx, layout, snap, rows = if (wh.second < 410) 3 else 4).apply(ctx, FrameLayout(this))
+                v.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY))
+                v.layout(0, 0, w, h)
+                val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                v.draw(Canvas(bmp))
+                File(out, resources.getResourceEntryName(layout) + ".png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            }
+            finish(); return
+        }
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding((16 * d).toInt(), (24 * d).toInt(), (16 * d).toInt(), (24 * d).toInt())
