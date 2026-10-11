@@ -1,0 +1,13 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:width="280dp" android:height="280dp" android:drawable="@drawable/wg_bg" />
+    <item android:left="16dp" android:top="18dp" android:right="150dp" android:bottom="250dp"><shape><corners android:radius="6dp" /><solid android:color="@color/wg_text2" /></shape></item>
+    <item android:left="200dp" android:top="16dp" android:right="16dp" android:bottom="248dp"><shape><corners android:radius="999dp" /><solid android:color="#FFFF3B30" /></shape></item>
+    <item android:left="16dp" android:top="56dp" android:right="16dp" android:bottom="180dp"><shape><corners android:radius="14dp" /><solid android:color="#26FF5A36" /></shape></item>
+    <item android:left="16dp" android:top="106dp" android:right="16dp" android:bottom="130dp"><shape><corners android:radius="14dp" /><solid android:color="@color/wg_fill" /></shape></item>
+    <item android:left="16dp" android:top="156dp" android:right="16dp" android:bottom="80dp"><shape><corners android:radius="14dp" /><solid android:color="@color/wg_fill" /></shape></item>
+    <item android:left="16dp" android:top="164dp" android:right="208dp" android:bottom="62dp"><shape><corners android:radius="16dp" /><solid android:color="@color/wg_fill" /></shape></item>
+    <item android:left="82dp" android:top="164dp" android:right="142dp" android:bottom="62dp"><shape><corners android:radius="16dp" /><solid android:color="@color/wg_fill" /></shape></item>
+    <item android:left="148dp" android:top="164dp" android:right="76dp" android:bottom="62dp"><shape><corners android:radius="16dp" /><solid android:color="@color/wg_fill" /></shape></item>
+    <item android:left="214dp" android:top="164dp" android:right="16dp" android:bottom="62dp"><shape><corners android:radius="16dp" /><solid android:color="@color/wg_fill" /></shape></item>
+    <item android:left="16dp" android:top="224dp" android:right="16dp" android:bottom="12dp"><shape><corners android:radius="999dp" /><gradient android:angle="0" android:startColor="#FFFF2E3B" android:endColor="#FFFF8A00" /></shape></item>
+</layer-list>

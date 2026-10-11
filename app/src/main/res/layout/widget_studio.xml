@@ -1,0 +1,38 @@
+<!-- 2x2 Studio: header (icon + status), channel with platform avatar, one primary action. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/wg_root" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="@drawable/wg_bg" android:orientation="vertical" android:padding="14dp">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical"
+        android:orientation="horizontal">
+        <ImageView android:layout_width="18dp" android:layout_height="18dp" android:src="@mipmap/ic_launcher"
+            android:contentDescription="Angra Streaming" />
+        <FrameLayout android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+        <TextView android:id="@+id/wg_status" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:background="@drawable/wg_badge" android:paddingStart="9dp" android:paddingEnd="9dp" android:paddingTop="3dp"
+            android:paddingBottom="3dp" android:singleLine="true" android:text="READY" android:textColor="@color/wg_text"
+            android:textSize="10sp" android:textStyle="bold" android:letterSpacing="0.08" />
+    </LinearLayout>
+    <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical"
+        android:orientation="horizontal">
+        <TextView android:id="@+id/wg_avatar" android:layout_width="34dp" android:layout_height="34dp"
+            android:background="@drawable/wg_av_rtmp" android:gravity="center" android:text="A" android:textColor="#FFFFFFFF"
+            android:textSize="15sp" android:textStyle="bold" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+            android:layout_marginStart="10dp" android:orientation="vertical">
+            <TextView android:id="@+id/wg_channel" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:singleLine="true" android:ellipsize="end" android:text="Your channel" android:textColor="@color/wg_text"
+                android:textSize="15sp" android:fontFamily="sans-serif-medium" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                <TextView android:id="@+id/wg_detail" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:singleLine="true" android:ellipsize="end" android:text="YouTube · 720p30" android:textColor="@color/wg_text2"
+                    android:textSize="12sp" />
+                <Chronometer android:id="@+id/wg_timer" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_marginStart="6dp" android:textColor="@color/wg_text" android:textSize="13sp"
+            android:fontFamily="sans-serif-medium" android:visibility="gone" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+    <TextView android:id="@+id/wg_go" android:layout_width="match_parent" android:layout_height="40dp" android:layout_marginTop="10dp"
+        android:background="@drawable/wg_go" android:gravity="center" android:singleLine="true" android:text="Go Live"
+        android:textColor="#FFFFFFFF" android:textSize="15sp" android:textStyle="bold" />
+</LinearLayout>

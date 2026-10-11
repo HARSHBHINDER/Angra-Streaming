@@ -1,0 +1,13 @@
+<resources>
+    <color name="wg_top">#FFFFFFFF</color>
+    <color name="wg_bottom">#FFF6F0EC</color>
+    <color name="wg_glow">#2EFF2E3B</color>
+    <color name="wg_glow2">#1AFF8A00</color>
+    <color name="wg_stroke">#143C3C43</color>
+    <color name="wg_text">#FF1C1C1E</color>
+    <color name="wg_text2">#993C3C43</color>
+    <color name="wg_fill">#0F3C3C43</color>
+    <color name="wg_fill_stroke">#1A3C3C43</color>
+    <color name="wg_icon">#FF1C1C1E</color>
+    <color name="wg_badge">#143C3C43</color>
+</resources>

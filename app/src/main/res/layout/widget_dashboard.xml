@@ -1,0 +1,98 @@
+<!-- 4x4 Dashboard: header, channel list with platform avatars, toggles, primary action. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/wg_root" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="@drawable/wg_bg" android:orientation="vertical" android:padding="16dp">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical"
+        android:orientation="horizontal">
+        <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@mipmap/ic_launcher"
+            android:contentDescription="Angra Streaming" />
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="8dp"
+            android:singleLine="true" android:text="Angra Streaming" android:textColor="@color/wg_text" android:textSize="16sp"
+            android:textStyle="bold" />
+        <TextView android:id="@+id/wg_status" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:background="@drawable/wg_badge" android:paddingStart="9dp" android:paddingEnd="9dp" android:paddingTop="3dp"
+            android:paddingBottom="3dp" android:singleLine="true" android:text="READY" android:textColor="@color/wg_text"
+            android:textSize="10sp" android:textStyle="bold" android:letterSpacing="0.08" />
+        <Chronometer android:id="@+id/wg_timer" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_marginStart="6dp" android:textColor="@color/wg_text" android:textSize="13sp"
+            android:fontFamily="sans-serif-medium" android:visibility="gone" />
+    </LinearLayout>
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="12dp"
+        android:text="CHANNELS" android:textColor="@color/wg_text2" android:textSize="10sp" android:textStyle="bold" android:letterSpacing="0.1" />
+    <LinearLayout android:id="@+id/wg_ch1" android:layout_width="match_parent" android:layout_height="44dp"
+        android:layout_marginTop="6dp" android:background="@drawable/wg_chip" android:gravity="center_vertical"
+        android:orientation="horizontal" android:paddingStart="8dp" android:paddingEnd="12dp">
+        <TextView android:id="@+id/wg_ch1_av" android:layout_width="28dp" android:layout_height="28dp"
+            android:background="@drawable/wg_av_rtmp" android:gravity="center" android:text="A" android:textColor="#FFFFFFFF"
+            android:textSize="12sp" android:textStyle="bold" />
+        <TextView android:id="@+id/wg_ch1_name" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+            android:layout_marginStart="10dp" android:singleLine="true" android:ellipsize="end" android:text="Channel"
+            android:textColor="@color/wg_text" android:textSize="14sp" android:fontFamily="sans-serif-medium" />
+        <TextView android:id="@+id/wg_ch1_detail" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:singleLine="true" android:text="YouTube" android:textColor="@color/wg_text2" android:textSize="11sp" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/wg_ch2" android:layout_width="match_parent" android:layout_height="44dp"
+        android:layout_marginTop="6dp" android:background="@drawable/wg_chip" android:gravity="center_vertical"
+        android:orientation="horizontal" android:paddingStart="8dp" android:paddingEnd="12dp">
+        <TextView android:id="@+id/wg_ch2_av" android:layout_width="28dp" android:layout_height="28dp"
+            android:background="@drawable/wg_av_rtmp" android:gravity="center" android:text="A" android:textColor="#FFFFFFFF"
+            android:textSize="12sp" android:textStyle="bold" />
+        <TextView android:id="@+id/wg_ch2_name" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+            android:layout_marginStart="10dp" android:singleLine="true" android:ellipsize="end" android:text="Channel"
+            android:textColor="@color/wg_text" android:textSize="14sp" android:fontFamily="sans-serif-medium" />
+        <TextView android:id="@+id/wg_ch2_detail" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:singleLine="true" android:text="YouTube" android:textColor="@color/wg_text2" android:textSize="11sp" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/wg_ch3" android:layout_width="match_parent" android:layout_height="44dp"
+        android:layout_marginTop="6dp" android:background="@drawable/wg_chip" android:gravity="center_vertical"
+        android:orientation="horizontal" android:paddingStart="8dp" android:paddingEnd="12dp">
+        <TextView android:id="@+id/wg_ch3_av" android:layout_width="28dp" android:layout_height="28dp"
+            android:background="@drawable/wg_av_rtmp" android:gravity="center" android:text="A" android:textColor="#FFFFFFFF"
+            android:textSize="12sp" android:textStyle="bold" />
+        <TextView android:id="@+id/wg_ch3_name" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+            android:layout_marginStart="10dp" android:singleLine="true" android:ellipsize="end" android:text="Channel"
+            android:textColor="@color/wg_text" android:textSize="14sp" android:fontFamily="sans-serif-medium" />
+        <TextView android:id="@+id/wg_ch3_detail" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:singleLine="true" android:text="YouTube" android:textColor="@color/wg_text2" android:textSize="11sp" />
+    </LinearLayout>
+    <TextView android:id="@+id/wg_empty" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp"
+        android:text="Add your first channel in the app to go live from here." android:textColor="@color/wg_text2"
+        android:textSize="13sp" android:visibility="gone" />
+    <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:minHeight="8dp" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+        <LinearLayout android:id="@+id/wg_rec" android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1"
+            android:background="@drawable/wg_tile" android:gravity="center" android:orientation="vertical">
+            <ImageView android:id="@+id/wg_rec_icon" android:layout_width="20dp" android:layout_height="20dp" android:src="@drawable/ic_record"
+                android:tint="@color/wg_icon" android:contentDescription="Record" />
+            <TextView android:id="@+id/wg_rec_label" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_marginTop="4dp" android:singleLine="true" android:text="Record" android:textColor="@color/wg_text"
+                android:textSize="11sp" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/wg_bub" android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1"
+            android:layout_marginStart="8dp" android:background="@drawable/wg_tile" android:gravity="center" android:orientation="vertical">
+            <ImageView android:id="@+id/wg_bub_icon" android:layout_width="20dp" android:layout_height="20dp" android:src="@drawable/ic_bubble"
+                android:tint="@color/wg_icon" android:contentDescription="Bubble" />
+            <TextView android:id="@+id/wg_bub_label" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_marginTop="4dp" android:singleLine="true" android:text="Bubble" android:textColor="@color/wg_text"
+                android:textSize="11sp" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/wg_brk" android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1"
+            android:layout_marginStart="8dp" android:background="@drawable/wg_tile" android:gravity="center" android:orientation="vertical">
+            <ImageView android:id="@+id/wg_brk_icon" android:layout_width="20dp" android:layout_height="20dp" android:src="@drawable/ic_pause"
+                android:tint="@color/wg_icon" android:contentDescription="Break" />
+            <TextView android:id="@+id/wg_brk_label" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_marginTop="4dp" android:singleLine="true" android:text="Break" android:textColor="@color/wg_text"
+                android:textSize="11sp" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/wg_mute" android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1"
+            android:layout_marginStart="8dp" android:background="@drawable/wg_tile" android:gravity="center" android:orientation="vertical">
+            <ImageView android:id="@+id/wg_mute_icon" android:layout_width="20dp" android:layout_height="20dp" android:src="@drawable/ic_mic"
+                android:tint="@color/wg_icon" android:contentDescription="Mute" />
+            <TextView android:id="@+id/wg_mute_label" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_marginTop="4dp" android:singleLine="true" android:text="Mute" android:textColor="@color/wg_text"
+                android:textSize="11sp" />
+        </LinearLayout>
+    </LinearLayout>
+    <TextView android:id="@+id/wg_go" android:layout_width="match_parent" android:layout_height="46dp" android:layout_marginTop="10dp"
+        android:background="@drawable/wg_go" android:gravity="center" android:singleLine="true" android:text="Go Live"
+        android:textColor="#FFFFFFFF" android:textSize="16sp" android:textStyle="bold" />
+</LinearLayout>

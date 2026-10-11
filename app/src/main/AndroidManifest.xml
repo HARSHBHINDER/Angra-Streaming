@@ -36,5 +36,22 @@
         <service
             android:name=".BubbleService"
             android:exported="false" />
+        <!-- Home-screen widgets, smallest to largest. -->
+        <receiver android:name=".OrbWidget" android:exported="false" android:label="Go Live orb">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_orb_info" />
+        </receiver>
+        <receiver android:name=".StudioWidget" android:exported="false" android:label="Studio">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_studio_info" />
+        </receiver>
+        <receiver android:name=".StripWidget" android:exported="false" android:label="Control strip">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_strip_info" />
+        </receiver>
+        <receiver android:name=".DashboardWidget" android:exported="false" android:label="Dashboard">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_dashboard_info" />
+        </receiver>
     </application>
 </manifest>

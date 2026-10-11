@@ -28,7 +28,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var store: Store
     private val prefs = mutableStateOf(Prefs())   // single source of truth for prefs, shared with Compose
 
-    private fun setPrefs(p: Prefs) { prefs.value = p; store.prefsBundle = p }
+    private fun setPrefs(p: Prefs) { prefs.value = p; store.prefsBundle = p; Widgets.refresh(this) }
+    private val openSuperChat = mutableStateOf(false)      // widget's Super Chat button
 
     private val perms = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         if (it[Manifest.permission.RECORD_AUDIO] == true) ensureOverlayThenCapture()
@@ -113,15 +114,39 @@ class MainActivity : ComponentActivity() {
                     initialActiveId = store.activeId,
                     prefs = prefs.value,
                     onPrefs = ::setPrefs,
-                    onPersistDestinations = { list, active -> store.destinations = list; store.activeId = active },
+                    onPersistDestinations = { list, active -> store.destinations = list; store.activeId = active; Widgets.refresh(this@MainActivity) },
                     onToggleStream = ::toggleStream,
                     onPickBubbleImage = { pickImage.launch("image/*") },
                     micDevices = mics.value,
                     onPreviewBubble = ::previewBubble,
+                    openSuperChat = openSuperChat.value,
+                    onSuperChatOpened = { openSuperChat.value = false },
                 )
                 cropSource.value?.let { BubbleCropper(it, onCancel = { cropSource.value = null }, onDone = ::saveBubble) }
                 }
             }
+        }
+        handleWidget(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleWidget(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        prefs.value = store.prefsBundle          // the widget may have flipped Record / Bubble
+    }
+
+    /** Home-screen widget taps that need the app: Go Live (Android asks for capture consent here), Super Chat. */
+    private fun handleWidget(i: Intent?) {
+        when (i?.action) {
+            Widgets.ACTION_GO_LIVE -> {
+                val s = StreamService.state.value
+                if ((s == StreamService.State.IDLE || s == StreamService.State.ERROR) && store.active() != null) toggleStream()
+            }
+            Widgets.ACTION_SUPER_CHAT -> openSuperChat.value = true
         }
     }
 

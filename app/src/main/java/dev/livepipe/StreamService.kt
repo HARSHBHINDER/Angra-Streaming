@@ -77,6 +77,10 @@ class StreamService : Service(), ConnectChecker {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> { stopEverything(); return START_NOT_STICKY }
+            // Home-screen widget controls for a running stream.
+            ACTION_BREAK -> { toggleBreak(); return START_STICKY }
+            ACTION_MIC -> { toggleMic(); return START_STICKY }
+            ACTION_RECORD -> { toggleRecord(); Widgets.refresh(this); return START_STICKY }
         }
         val consent = intent?.let { IntentCompat.getParcelableExtra(it, EXTRA_CONSENT, Intent::class.java) }
         val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
@@ -87,6 +91,7 @@ class StreamService : Service(), ConnectChecker {
         }
         state.value = State.CONNECTING
         goForeground("Connecting…")
+        Widgets.refresh(this)
         val mp = (getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager)
             .getMediaProjection(resultCode, consent)
         if (mp == null) { stopEverything(); return START_NOT_STICKY }
@@ -165,6 +170,7 @@ class StreamService : Service(), ConnectChecker {
         audio = null; crop = null; overlay = null; facecamLayer = null; destId = null; micMuted = false
         breakLayers = emptyList(); onBreak.value = false
         gameMuted = false; recPaused = false; overlayHidden = false; dataSaver = false; zoomed = false; sceneDest = null
+        Widgets.refresh(this)
         state.value = State.IDLE; lastBitrate.value = 0L; liveSince.value = 0L
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -211,6 +217,7 @@ class StreamService : Service(), ConnectChecker {
         breakLayers.forEach { gl.removeFilter(it) }
         breakLayers = emptyList()
         onBreak.value = on
+        Widgets.refresh(this)
         if (!on) return
         val black = ImageFilterRender().apply {
             setImage(android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888)
@@ -358,6 +365,7 @@ class StreamService : Service(), ConnectChecker {
     override fun onConnectionSuccess() {
         state.value = State.LIVE
         goForeground("LIVE")
+        Widgets.refresh(this)
         if (adaptive) bitrateAdapter = BitrateAdapter { bps ->
             stream?.setVideoBitrateOnFly(bps)
         }.apply { setMaxBitrate(maxBitrate) }
@@ -375,6 +383,9 @@ class StreamService : Service(), ConnectChecker {
 
     companion object {
         const val ACTION_STOP = "dev.livepipe.STOP"
+        const val ACTION_BREAK = "dev.livepipe.BREAK"
+        const val ACTION_MIC = "dev.livepipe.MIC"
+        const val ACTION_RECORD = "dev.livepipe.RECORD"
         const val EXTRA_RESULT_CODE = "resultCode"
         const val EXTRA_CONSENT = "consent"
         private const val CHANNEL = "live"
@@ -412,7 +423,7 @@ class StreamService : Service(), ConnectChecker {
         /** Break screen on/off; calling it while on reloads a changed break image. */
         fun setBreak(on: Boolean) { live?.applyBreak(on) }
 
-        fun toggleMic() { live?.run { micMuted = !micMuted; applyVolumes(Store(this).prefsBundle) } }
+        fun toggleMic() { live?.run { micMuted = !micMuted; applyVolumes(Store(this).prefsBundle); Widgets.refresh(this) } }
 
         fun toggleBreak() = setBreak(!onBreak.value)
 

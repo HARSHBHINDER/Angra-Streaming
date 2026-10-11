@@ -327,11 +327,14 @@ fun App(
     onPickBubbleImage: () -> Unit,
     micDevices: List<Pair<Int, String>>,
     onPreviewBubble: (Boolean) -> Unit = {},
+    openSuperChat: Boolean = false,                 // home-screen widget asked for the Super Chat screen
+    onSuperChatOpened: () -> Unit = {},
 ) {
     var tab by remember { mutableStateOf(0) }
     var sceneFor by remember { mutableStateOf<Destination?>(null) }   // scene editor opened from the Stream tab
     var sceneAlerts by remember { mutableStateOf(false) }               // ...opened on the Super Chat alert layer
     var superChat by remember { mutableStateOf(false) }
+    LaunchedEffect(openSuperChat) { if (openSuperChat) { tab = 0; superChat = true; onSuperChatOpened() } }
     var destinations by remember { mutableStateOf(initialDestinations) }
     var activeId by remember { mutableStateOf(initialActiveId) }
 

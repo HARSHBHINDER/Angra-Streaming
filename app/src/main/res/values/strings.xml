@@ -1,0 +1,6 @@
+<resources>
+    <string name="widget_orb_desc">One tap to go live; shows your live time while streaming.</string>
+    <string name="widget_studio_desc">Your channel at a glance, live status and timer, and a big Go Live button.</string>
+    <string name="widget_strip_desc">Go live or end, take a break, mute, and open Super Chat in one row.</string>
+    <string name="widget_dashboard_desc">Switch channels, toggle record, bubble, break and mute, and go live.</string>
+</resources>
