@@ -118,6 +118,7 @@ data class Prefs(
     val bubbleSlots: String = BubbleAction.DEFAULT_IDS,   // the 5 bubble controls, comma-joined action ids
     val bubbleSecure: Boolean = true,            // FLAG_SECURE on the bubble so capture doesn't show its content
     val bubbleEdgeHide: Boolean = true,          // tuck into a slim edge handle when idle; tap the handle to pop out
+    val theme: String = "original",              // ui.Palettes id
 ) {
     companion object {
         const val BUBBLE_MAX_TRANSPARENCY = 0.95f
@@ -175,6 +176,7 @@ class Store(context: Context) {
                 alertStyle = o.optInt("ast", 0), alertSeconds = o.optInt("asec", 8), alertShowTotal = o.optBoolean("atot", true),
                 bubbleSlots = o.optString("bsl", BubbleAction.DEFAULT_IDS),
                 bubbleSecure = o.optBoolean("bsec", true),
+                theme = o.optString("th", "original"),
             )
         }
         set(p) {
@@ -186,7 +188,7 @@ class Store(context: Context) {
                 put("bx", p.bubbleX.toDouble()); put("by", p.bubbleY.toDouble()); put("beh", p.bubbleEdgeHide); put("brk", p.breakImageUri)
                 put("bsl", p.bubbleSlots); put("bsec", p.bubbleSecure)
                 put("sc", p.superChat); put("ytk", p.ytApiKey); put("ast", p.alertStyle); put("asec", p.alertSeconds)
-                put("atot", p.alertShowTotal)
+                put("atot", p.alertShowTotal); put("th", p.theme)
             }
             prefs.edit().putString("prefs", o.toString()).apply()
         }

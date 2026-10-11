@@ -1,5 +1,4 @@
-<!-- 1x1: an ember tile that fills its cell, with a soft highlight. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item><shape><corners android:radius="@dimen/wg_radius" /><gradient android:angle="315" android:startColor="#FFFF2E3B" android:endColor="#FFFF8A00" /></shape></item>
-    <item><shape><corners android:radius="@dimen/wg_radius" /><gradient android:type="radial" android:gradientRadius="70dp" android:centerX="0.25" android:centerY="0.15" android:startColor="#38FFFFFF" android:endColor="#00FFFFFF" /></shape></item>
+    <item><shape><corners android:radius="@dimen/wg_radius" /><gradient android:type="radial" android:gradientRadius="90dp" android:centerX="0.15" android:centerY="0.1" android:startColor="#33FFFFFF" android:endColor="#00FFFFFF" /></shape></item>
 </layer-list>

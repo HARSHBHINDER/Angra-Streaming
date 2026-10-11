@@ -107,7 +107,7 @@ class MainActivity : ComponentActivity() {
         mics.value = micDevices()
         getSystemService(android.media.AudioManager::class.java).registerAudioDeviceCallback(micCallback, null)
         setContent {
-            LivePipeTheme {
+            LivePipeTheme(prefs.value.theme) {
                 Box {
                 App(
                     initialDestinations = store.destinations,

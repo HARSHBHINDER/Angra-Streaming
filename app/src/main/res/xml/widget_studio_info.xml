@@ -1,7 +1,7 @@
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:minWidth="110dp" android:minHeight="110dp"
     android:targetCellWidth="2" android:targetCellHeight="2"
-    android:maxResizeWidth="260dp" android:maxResizeHeight="200dp"
+    android:maxResizeWidth="250dp" android:maxResizeHeight="250dp"
     android:resizeMode="horizontal|vertical" android:widgetCategory="home_screen" android:updatePeriodMillis="0"
-    android:initialLayout="@layout/widget_studio" android:previewLayout="@layout/widget_studio" android:previewImage="@drawable/wg_prev_studio"
+    android:initialLayout="@layout/widget_studio" android:previewLayout="@layout/widget_studio"
     android:description="@string/widget_studio_desc" />

@@ -1,8 +1,0 @@
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:width="160dp" android:height="160dp" android:drawable="@drawable/wg_bg" />
-    <item android:left="118dp" android:top="14dp" android:right="14dp" android:bottom="130dp"><shape><corners android:radius="999dp" /><solid android:color="#FFFF3B30" /></shape></item>
-    <item android:left="14dp" android:top="70dp" android:width="30dp" android:height="30dp"><shape android:shape="oval"><gradient android:angle="315" android:startColor="#FFFF0033" android:endColor="#FFCC0000" /></shape></item>
-    <item android:left="52dp" android:top="74dp" android:right="40dp" android:bottom="76dp"><shape><corners android:radius="6dp" /><solid android:color="@color/wg_text2" /></shape></item>
-    <item android:left="52dp" android:top="90dp" android:right="70dp" android:bottom="62dp"><shape><corners android:radius="6dp" /><solid android:color="@color/wg_fill_stroke" /></shape></item>
-    <item android:left="14dp" android:top="114dp" android:right="14dp" android:bottom="12dp"><shape><corners android:radius="999dp" /><gradient android:angle="0" android:startColor="#FFFF2E3B" android:endColor="#FFFF8A00" /></shape></item>
-</layer-list>

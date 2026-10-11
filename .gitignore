@@ -18,3 +18,6 @@ app/build/
 # JVM crash dumps
 hs_err_pid*.log
 replay_pid*.log
+
+# Local copies of built APKs (CI publishes releases)
+release/

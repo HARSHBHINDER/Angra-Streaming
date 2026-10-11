@@ -1,26 +1,44 @@
-<!-- 4x1 Control strip: Go Live pill (live: stop + running time) and three round live controls. -->
+<!-- 4x1: four actions, equal tiles, 8dp gutters. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/wg_root" android:layout_width="match_parent" android:layout_height="match_parent"
-    android:background="@drawable/wg_bg" android:gravity="center_vertical" android:orientation="horizontal"
-    android:paddingStart="10dp" android:paddingEnd="10dp">
-    <LinearLayout android:id="@+id/wg_go_btn" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1"
-        android:background="@drawable/wg_go" android:gravity="center" android:orientation="horizontal"
-        android:paddingStart="10dp" android:paddingEnd="12dp">
-        <ImageView android:id="@+id/wg_go_icon" android:layout_width="18dp" android:layout_height="18dp"
-            android:src="@drawable/ic_play" android:contentDescription="Go live" />
-        <TextView android:id="@+id/wg_go_label" android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:layout_marginStart="6dp" android:singleLine="true" android:text="Go Live" android:textColor="#FFFFFFFF"
-            android:textSize="15sp" android:textStyle="bold" />
-        <Chronometer android:id="@+id/wg_timer" android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:layout_marginStart="6dp" android:textColor="#FFFFFFFF" android:textSize="15sp" android:textStyle="bold"
-            android:visibility="gone" />
-    </LinearLayout>
-    <ImageView android:id="@+id/wg_break" android:layout_width="44dp" android:layout_height="44dp" android:layout_marginStart="8dp"
-        android:background="@drawable/wg_round" android:padding="11dp" android:src="@drawable/ic_pause" android:tint="@color/wg_icon"
-        android:contentDescription="Break" />
-    <ImageView android:id="@+id/wg_mic" android:layout_width="44dp" android:layout_height="44dp" android:layout_marginStart="8dp"
-        android:background="@drawable/wg_round" android:padding="11dp" android:src="@drawable/ic_mic" android:tint="@color/wg_icon"
-        android:contentDescription="Mute microphone" />
-    <TextView android:id="@+id/wg_sc" android:layout_width="44dp" android:layout_height="44dp" android:layout_marginStart="8dp"
-        android:background="@drawable/wg_round_sc" android:gravity="center" android:text="$" android:textColor="#FFFFFFFF"
-        android:textSize="18sp" android:textStyle="bold" android:contentDescription="Super Chat" />
+    android:background="@drawable/wg_bg" android:orientation="horizontal" android:padding="8dp">
+    <FrameLayout android:id="@+id/wg_t1" android:layout_width="0dp" android:layout_height="match_parent"
+        android:layout_weight="1" android:background="@drawable/wg_tile_off">
+        <ImageView android:id="@+id/wg_t1_icon" android:layout_width="20dp" android:layout_height="20dp"
+            android:layout_gravity="top|start" android:layout_marginStart="10dp" android:layout_marginTop="10dp"
+            android:src="@drawable/ic_play" android:contentDescription="Action" />
+        <TextView android:id="@+id/wg_t1_label" android:layout_width="match_parent" android:layout_height="16dp"
+            android:layout_gravity="bottom|start" android:layout_marginStart="10dp" android:layout_marginEnd="4dp"
+            android:layout_marginBottom="8dp" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="9sp" android:autoSizeMaxTextSize="12sp" android:text="Action"
+            android:textColor="@color/wg_text" android:textSize="12sp" android:fontFamily="sans-serif-medium" />
+    </FrameLayout>
+    <FrameLayout android:id="@+id/wg_t2" android:layout_width="0dp" android:layout_height="match_parent"
+        android:layout_weight="1" android:layout_marginStart="8dp" android:background="@drawable/wg_tile_off">
+        <ImageView android:id="@+id/wg_t2_icon" android:layout_width="20dp" android:layout_height="20dp"
+            android:layout_gravity="top|start" android:layout_marginStart="10dp" android:layout_marginTop="10dp"
+            android:src="@drawable/ic_play" android:contentDescription="Action" />
+        <TextView android:id="@+id/wg_t2_label" android:layout_width="match_parent" android:layout_height="16dp"
+            android:layout_gravity="bottom|start" android:layout_marginStart="10dp" android:layout_marginEnd="4dp"
+            android:layout_marginBottom="8dp" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="9sp" android:autoSizeMaxTextSize="12sp" android:text="Action"
+            android:textColor="@color/wg_text" android:textSize="12sp" android:fontFamily="sans-serif-medium" />
+    </FrameLayout>
+    <FrameLayout android:id="@+id/wg_t3" android:layout_width="0dp" android:layout_height="match_parent"
+        android:layout_weight="1" android:layout_marginStart="8dp" android:background="@drawable/wg_tile_off">
+        <ImageView android:id="@+id/wg_t3_icon" android:layout_width="20dp" android:layout_height="20dp"
+            android:layout_gravity="top|start" android:layout_marginStart="10dp" android:layout_marginTop="10dp"
+            android:src="@drawable/ic_play" android:contentDescription="Action" />
+        <TextView android:id="@+id/wg_t3_label" android:layout_width="match_parent" android:layout_height="16dp"
+            android:layout_gravity="bottom|start" android:layout_marginStart="10dp" android:layout_marginEnd="4dp"
+            android:layout_marginBottom="8dp" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="9sp" android:autoSizeMaxTextSize="12sp" android:text="Action"
+            android:textColor="@color/wg_text" android:textSize="12sp" android:fontFamily="sans-serif-medium" />
+    </FrameLayout>
+    <FrameLayout android:id="@+id/wg_t4" android:layout_width="0dp" android:layout_height="match_parent"
+        android:layout_weight="1" android:layout_marginStart="8dp" android:background="@drawable/wg_tile_off">
+        <ImageView android:id="@+id/wg_t4_icon" android:layout_width="20dp" android:layout_height="20dp"
+            android:layout_gravity="top|start" android:layout_marginStart="10dp" android:layout_marginTop="10dp"
+            android:src="@drawable/ic_play" android:contentDescription="Action" />
+        <TextView android:id="@+id/wg_t4_label" android:layout_width="match_parent" android:layout_height="16dp"
+            android:layout_gravity="bottom|start" android:layout_marginStart="10dp" android:layout_marginEnd="4dp"
+            android:layout_marginBottom="8dp" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="9sp" android:autoSizeMaxTextSize="12sp" android:text="Action"
+            android:textColor="@color/wg_text" android:textSize="12sp" android:fontFamily="sans-serif-medium" />
+    </FrameLayout>
 </LinearLayout>

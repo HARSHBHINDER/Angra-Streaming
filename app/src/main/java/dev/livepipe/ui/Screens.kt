@@ -398,13 +398,14 @@ fun App(
 /** Ember glow from the oni icon's flame, behind every large title: the app's signature. */
 @Composable
 fun EmberBackdrop() {
-    val dark = isSystemInDarkTheme()
+    val dark = isDark
+    val (g1, g2) = LocalTheme.current.p.glow     // the theme's two lights
     Box(Modifier.fillMaxWidth().height(520.dp).drawBehind {
         drawRect(Brush.radialGradient(
-            listOf(Color(0xFFFF3B30).copy(alpha = if (dark) 0.42f else 0.20f), Color.Transparent),
+            listOf(g1.copy(alpha = g1.alpha * if (dark) 0.42f else 0.20f), Color.Transparent),
             center = Offset(size.width * 0.9f, 0f), radius = size.width * 1.05f))
         drawRect(Brush.radialGradient(
-            listOf(Color(0xFFFF8A00).copy(alpha = if (dark) 0.22f else 0.12f), Color.Transparent),
+            listOf(g2.copy(alpha = g2.alpha * if (dark) 0.22f else 0.12f), Color.Transparent),
             center = Offset(0f, size.height * 0.25f), radius = size.width * 0.8f))
     })
 }
@@ -1160,6 +1161,9 @@ fun SettingsScreen(
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         LargeTitle("Settings")
 
+        SectionHeader("Theme · ${paletteOf(prefs.theme).name}")
+        ThemePicker(prefs.theme) { onPrefs(prefs.copy(theme = it)) }
+
         SectionHeader("Floating bubble")
         // One grouped card: toggle, what the bubble shows, its image.
         InsetCard {
@@ -1237,6 +1241,45 @@ fun SettingsScreen(
         }
         Footer("Recording uses the active channel's resolution and bitrate (single encoder keeps CPU low).")
         Spacer(Modifier.height(32.dp))
+    }
+}
+
+/** Theme grid in the iOS app-icon picker style: a mini app per theme, the chosen one ringed in its own tint. */
+@Composable
+fun ThemePicker(selected: String, onPick: (String) -> Unit) {
+    Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Palettes.chunked(4).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                row.forEach { p ->
+                    val on = p.id == selected
+                    val card = if (p.dark == null) Color(0xFF1C1C1E) else p.card
+                    Column(Modifier.weight(1f).iosTap { onPick(p.id) }, horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(Modifier.fillMaxWidth().aspectRatio(0.72f)
+                            .border(if (on) 2.5.dp else 0.5.dp, if (on) p.accent else Ios.separator, RoundedCornerShape(16.dp))
+                            .padding(if (on) 4.dp else 0.dp).clip(RoundedCornerShape(if (on) 12.dp else 16.dp))
+                            .background(p.bg)
+                            .drawBehind {
+                                drawRect(Brush.radialGradient(listOf(p.glow[0].copy(alpha = p.glow[0].alpha * 0.55f), Color.Transparent),
+                                    center = Offset(size.width, 0f), radius = size.width * 1.2f))
+                            }
+                            .padding(8.dp)) {
+                            // Mini app: large title, two cards, the primary button.
+                            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                Box(Modifier.fillMaxWidth(0.6f).height(6.dp)
+                                    .background(if (p.dark == false) Color.Black else Color.White, RoundedCornerShape(3.dp)))
+                                Box(Modifier.fillMaxWidth().height(18.dp).background(card, RoundedCornerShape(5.dp)))
+                                Box(Modifier.fillMaxWidth().height(10.dp).background(card, RoundedCornerShape(5.dp)))
+                            }
+                            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(14.dp)
+                                .background(Brush.linearGradient(p.brush), RoundedCornerShape(50)))
+                        }
+                        Text(p.name, fontSize = 12.sp, maxLines = 1, color = if (on) Accent else MaterialTheme.colorScheme.onBackground,
+                            fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal, modifier = Modifier.padding(top = 6.dp))
+                    }
+                }
+                repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
     }
 }
 

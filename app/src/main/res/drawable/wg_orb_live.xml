@@ -1,4 +1,4 @@
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item><shape><corners android:radius="@dimen/wg_radius" /><solid android:color="#FF141416" /></shape></item>
-    <item><shape><corners android:radius="@dimen/wg_radius" /><stroke android:width="3dp" android:color="#FFFF3B30" /></shape></item>
+    <item><shape><corners android:radius="@dimen/wg_radius" /><gradient android:angle="270" android:startColor="#FF26262A" android:endColor="#FF111113" /></shape></item>
+    <item><shape><corners android:radius="@dimen/wg_radius" /><gradient android:type="radial" android:gradientRadius="120dp" android:centerX="0" android:centerY="0" android:startColor="#66FF3B30" android:endColor="#00FF3B30" /></shape></item>
 </layer-list>

@@ -35,6 +35,10 @@ android {
     }
 
     buildTypes {
+        // Debug installs next to the release app (own id), so tools like the widget gallery never replace it.
+        debug {
+            applicationIdSuffix = ".debug"
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
