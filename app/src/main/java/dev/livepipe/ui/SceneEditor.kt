@@ -386,7 +386,8 @@ private fun OverlayPreview(uri: String, still: androidx.compose.ui.graphics.Imag
     else androidx.compose.ui.viewinterop.AndroidView({ c ->
         android.widget.ImageView(c).apply {
             scaleType = android.widget.ImageView.ScaleType.FIT_XY        // the box already has the image's shape
-            setImageDrawable(animated); (animated as android.graphics.drawable.AnimatedImageDrawable).start()
+            setImageDrawable(animated)
+            if (android.os.Build.VERSION.SDK_INT >= 28) (animated as android.graphics.drawable.AnimatedImageDrawable).start()
         }
     }, Modifier.fillMaxSize())
 }

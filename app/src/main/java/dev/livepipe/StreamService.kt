@@ -265,10 +265,13 @@ class StreamService : Service(), ConnectChecker {
     }
 
     private fun applyVolumes(p: Prefs) {
+        val mic = if (micMuted) 0f else p.micVolume
+        val game = if (gameMuted) 0f else p.gameVolume
         when (val a = audio) {
-            is MixAudioSource -> { a.microphoneVolume = if (micMuted) 0f else p.micVolume; a.internalVolume = if (gameMuted) 0f else p.gameVolume }
-            is MicrophoneSource -> a.microphoneVolume = if (micMuted) 0f else p.micVolume
-            is InternalAudioSource -> a.internalVolume = if (gameMuted) 0f else p.gameVolume
+            is MicrophoneSource -> a.microphoneVolume = mic
+            // Game and mixed capture only exist on Android 10+ (see onStartCommand).
+            is MixAudioSource -> if (Build.VERSION.SDK_INT >= 29) { a.microphoneVolume = mic; a.internalVolume = game }
+            is InternalAudioSource -> if (Build.VERSION.SDK_INT >= 29) a.internalVolume = game
             else -> Unit
         }
     }
