@@ -11,16 +11,10 @@ import android.graphics.BlurMaskFilter
 import android.graphics.DiscretePathEffect
 import android.graphics.RuntimeShader
 import android.graphics.Shader
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
 import android.os.Build
-import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.BasicText
@@ -31,12 +25,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -47,7 +39,6 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
@@ -82,8 +73,6 @@ import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -94,9 +83,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlin.math.PI
 import kotlin.math.abs
-import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.max
@@ -228,8 +215,6 @@ private object Textures {
     val grain by lazy { noise(192, 192, 7) { r, _, _ -> (r.nextInt(70) shl 24) or 0xFFFFFF } }
     /** Washi paper: soft fibres and specks. */
     val paper by lazy { noise(256, 256, 23) { r, _, _ -> val a = r.nextInt(100); if (a > 93) (40 shl 24) or 0x8B7B60 else (a / 6 shl 24) or 0xFFFFFF } }
-    /** Projector scanlines: one bright row in three. */
-    val scan by lazy { noise(4, 6, 3) { _, _, y -> if (y % 3 == 0) (34 shl 24) or 0xBFFBFF else 0 } }
 
     fun brush(img: ImageBitmap) = ShaderBrush(ImageShader(img, TileMode.Repeated, TileMode.Repeated))
 }
@@ -249,8 +234,6 @@ private fun DrawScope.glow(path: Path, color: Color, width: Float, bloom: Float,
     glowPaint.style = android.graphics.Paint.Style.STROKE
     c.nativeCanvas.drawPath(path.asAndroidPath(), glowPaint)
 }
-private fun DrawScope.glowLine(a: Offset, b: Offset, color: Color, width: Float, bloom: Float) =
-    glow(Path().apply { moveTo(a.x, a.y); lineTo(b.x, b.y) }, color, width, bloom)
 
 private val textPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
 
@@ -321,7 +304,7 @@ fun Modifier.themed(role: Part = Part.CARD, selected: Boolean = false, tint: Col
                     else -> drawFill(look, th.p, path, role, th.dark)
                 }
                 drawContent()
-                drawEdge(look, path, pm, rPx, if (animated) host?.time?.value ?: STILL else STILL, Offset.Zero, role)
+                drawEdge(look, path, pm, rPx, if (animated) host?.time?.value ?: STILL else STILL, role)
                 if (selected) {
                     if (look.edge == Edge.PULSE || look.edge == Edge.NEON || look.edge == Edge.GLITCH || look.edge == Edge.CHROMA)
                         glow(path, accent.copy(alpha = 0.8f), 2.dp.toPx(), 6.dp.toPx())
@@ -330,16 +313,6 @@ fun Modifier.themed(role: Part = Part.CARD, selected: Boolean = false, tint: Col
             }
         }
 }
-
-/** A themed surface holding [content] (see [themed]). */
-@Composable
-fun ThemedSurface(
-    modifier: Modifier = Modifier,
-    role: Part = Part.CARD,
-    selected: Boolean = false,
-    tint: Color? = null,
-    content: @Composable BoxScope.() -> Unit,
-) = Box(modifier.themed(role, selected, tint), content = content)
 
 private fun DrawScope.drawFill(look: Look, p: Palette, path: Path, role: Part, dark: Boolean) {
     if (role == Part.HERO) { drawPath(path, Brush.linearGradient(look.hero, Offset.Zero, Offset(size.width, size.height))); return }
@@ -370,7 +343,7 @@ half4 main(float2 p) {
 
 /**
  * Liquid Glass capsule over live content: the recorded [screen] slice behind it, blurred and lens-bent at the rim
- * (with a slight chromatic split), a pale tint, a bright inner top and a tilt-following specular rim. Because it
+ * (with a slight chromatic split), a pale tint, a bright inner top and a specular rim. Because it
  * references the screen layer, scrolling content visibly flows and bends through the glass with no extra drawing.
  */
 fun Modifier.liquidGlass(screen: GraphicsLayer?): Modifier = composed {
@@ -418,7 +391,7 @@ fun Modifier.liquidGlass(screen: GraphicsLayer?): Modifier = composed {
 
 /* ---------------- edges ---------------- */
 
-private fun DrawScope.drawEdge(look: Look, path: Path, pm: PathMeasure, rPx: Float, t: Float, tilt: Offset, role: Part) {
+private fun DrawScope.drawEdge(look: Look, path: Path, pm: PathMeasure, rPx: Float, t: Float, role: Part) {
     val c0 = look.edgeColors.getOrElse(0) { Color.White }
     val c1 = look.edgeColors.getOrElse(1) { c0 }
     val w = size.width; val h = size.height
@@ -501,8 +474,8 @@ private fun DrawScope.drawEdge(look: Look, path: Path, pm: PathMeasure, rPx: Flo
             translate(1.5.dp.toPx(), 0f) { drawPath(path, c1.copy(alpha = 0.85f), style = Stroke(1.2.dp.toPx())) }
         }
         Edge.SPECULAR -> {
-            // Liquid Glass rim: brightest where it faces the light; the light follows the phone's tilt.
-            val lx = -0.35f + tilt.x * 0.9f; val ly = -1f + tilt.y * 0.5f
+            // Liquid Glass rim: brightest where it faces the light, from the upper left.
+            val lx = -0.35f; val ly = -1f
             val n = sqrt(lx * lx + ly * ly).coerceAtLeast(0.01f)
             val dd = Offset(lx / n, ly / n); val cx = w / 2; val cy = h / 2; val m = max(w, h) / 2
             drawPath(path, Brush.linearGradient(
@@ -1195,10 +1168,10 @@ private object Gpu {
 }
 
 /** Fills the scene with a GPU shader; false when the phone can't (Android 12 and older). */
-private fun DrawScope.shader(sh: RuntimeShader?, W: Float, H: Float, t: Float?): Boolean {
+private fun DrawScope.shader(sh: RuntimeShader?, W: Float, H: Float, t: Float): Boolean {
     if (sh == null || Build.VERSION.SDK_INT < 33) return false
     sh.setFloatUniform("res", W, H)
-    if (t != null) sh.setFloatUniform("t", t)
+    sh.setFloatUniform("t", t)
     drawRect(ShaderBrush(sh), Offset.Zero, Size(W, H))
     return true
 }
@@ -1232,7 +1205,7 @@ fun ThemeBackdrop(modifier: Modifier = Modifier) {
                 val t = if (moves) host.time.value else STILL        // read = redraw per tick, only while the clock runs
                 sharp.record(d, layoutDirection, px) {
                     drawLayer(still)
-                    if (moves) drawSceneMoving(th.p, full, t, Offset.Zero, th.dark)
+                    if (moves) drawSceneMoving(th.p, full, t, th.dark)
                 }
                 drawLayer(sharp)
                 if (glass) frosted.record(d, layoutDirection, px) { drawLayer(sharp) }
@@ -1243,7 +1216,7 @@ fun ThemeBackdrop(modifier: Modifier = Modifier) {
 /** Draws a whole scene, frozen at [STILL], as if this canvas were [full]; backdrop and theme previews. */
 fun DrawScope.drawScene(p: Palette, full: Size, dark: Boolean) {
     drawSceneStill(p, full, dark)
-    drawSceneMoving(p, full, STILL, Offset.Zero, dark)
+    drawSceneMoving(p, full, STILL, dark)
 }
 
 private fun DrawScope.drawSceneStill(p: Palette, full: Size, dark: Boolean) {
@@ -1269,7 +1242,7 @@ private fun DrawScope.drawSceneStill(p: Palette, full: Size, dark: Boolean) {
     }
 }
 
-private fun DrawScope.drawSceneMoving(p: Palette, full: Size, t: Float, tilt: Offset, dark: Boolean) {
+private fun DrawScope.drawSceneMoving(p: Palette, full: Size, t: Float, dark: Boolean) {
     val W = full.width; val H = full.height
     if (W <= 0f || H <= 0f) return
     when (p.look.scene) {
