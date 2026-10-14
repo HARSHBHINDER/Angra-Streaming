@@ -54,12 +54,13 @@ private object Faces2 {
     val oxanium = f(R.font.theme_oxanium); val oxaniumBody = f(R.font.theme_oxanium_body); val zen = f(R.font.theme_zenmincho)
     val shojumaru = f(R.font.theme_shojumaru); val monoton = f(R.font.theme_monoton); val raleway = f(R.font.theme_raleway)
     val quicksand = f(R.font.theme_quicksand); val cormorant = f(R.font.theme_cormorant); val shareTech = f(R.font.theme_sharetech)
+    val shippori = f(R.font.theme_shippori); val zenMaru = f(R.font.theme_zenmaru)
     val baskerville = f(R.font.theme_baskerville); val jost = f(R.font.theme_jost); val syncopate = f(R.font.theme_syncopate)
 }
 private val N = FontWeight.Normal
 
 /**
- * The 16 themes, in picker order, each built from research into its source:
+ * The 17 themes, in picker order, each built from research into its source:
  *  Tron Legacy — GMUNK's UI for the film: minimal, angled lines and neon glows on dark, travelling linework; cool
  *    cyan for users, orange for Clu (ggsci pal_tron "legacy" hexes).
  *  Cyberpunk — CDPR's UI Art Bible ("Neomilitarism"): acid yellow, red and turquoise, condensed technical type,
@@ -71,7 +72,23 @@ private val N = FontWeight.Normal
  *    Frost and Aurora. Dune — Arrakis orange with a complementary Fremen blue accent.
  *  Liquid Glass — frosted backdrop blur + edge lensing + a specular rim.
  */
+/*
+ * Wa: paper and ink. By day unbleached silk (kinari) with ink type and one indigo (ai) action colour; by night sumi
+ * ink with the indigo lifted. Seal red is kept for the stamp and live states. Shippori Mincho titles (brush-born,
+ * calm authority), Zen Maru Gothic interface (soft, rounded, friendly for every age). All text in English.
+ */
+private fun waLook(night: Boolean) = Look(Scene.WA, Edge.NONE, radius = 18.dp,
+    shadow = if (night) Color.Black.copy(alpha = 0.35f) else c(0x2E165E83),
+    hero = listOf(c(0xFF1F6E98), c(0xFF0F2540)),
+    font = Faces2.zenMaru, titleFont = Faces2.shippori, titleWeight = FontWeight.Bold, titleTracking = 0f, stamp = "配")
+val WaDay = Palette("wa", "Wa", false, c(0xFFFBFAF5), c(0xFFFFFFFF), c(0xFFF3F0E6), c(0xFF165E83), listOf(c(0xFF1F77A6), c(0xFF165E83)), waLook(false))
+private val WaNight = Palette("wa", "Wa", true, c(0xFF161513), c(0xFF22201C), c(0xFF2C2925), c(0xFF5B9BC2), listOf(c(0xFF5B9BC2), c(0xFF2C6E95)), waLook(true))
+
+/** Wa follows the phone's day/night setting; every other theme keeps its own. */
+fun Palette.forSystem(dark: Boolean) = if (this === WaDay && dark) WaNight else this
+
 val Palettes = listOf(
+    WaDay,
     Palette("matte", "Matte Black", true, c(0xFF000000), c(0xFF111111), c(0xFF1C1C1C), c(0xFFAEAEB2), listOf(c(0xFF48484A), c(0xFF1C1C1E)),
         Look(Scene.MATTE, Edge.HAIRLINE, radius = 22.dp, edgeColors = listOf(Color.White.copy(alpha = 0.07f)),
             hero = listOf(c(0xFF141414), c(0xFF050505)), titleFont = Faces2.manrope, titleWeight = N, titleTracking = -0.4f)),
@@ -127,11 +144,11 @@ val Palettes = listOf(
             hero = listOf(c(0xFF3A2414), c(0xFF1E120A)), titleFont = Faces2.syncopate, titleCaps = true, titleTracking = 4f, titleWeight = N, titleScale = 0.62f)),
 )
 
-fun paletteOf(id: String) = Palettes.firstOrNull { it.id == id } ?: Palettes[2]
+fun paletteOf(id: String) = Palettes.firstOrNull { it.id == id } ?: WaDay
 
 /** The theme in use and whether it renders dark (Original follows the system). */
 class Themed(val p: Palette, val dark: Boolean)
-val LocalTheme = staticCompositionLocalOf { Themed(Palettes[2], true) }
+val LocalTheme = staticCompositionLocalOf { Themed(WaDay, false) }
 
 val Accent @Composable get() = LocalTheme.current.p.accent
 val EmberBrush @Composable get() = Brush.linearGradient(LocalTheme.current.p.brush)
@@ -173,8 +190,8 @@ private fun iosType(font: FontFamily) = Typography(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LivePipeTheme(theme: String = "original", live: Boolean = false, content: @Composable () -> Unit) {
-    val p = paletteOf(theme)
+fun LivePipeTheme(theme: String = "wa", live: Boolean = false, content: @Composable () -> Unit) {
+    val p = paletteOf(theme).forSystem(isSystemInDarkTheme())
     val dark = p.dark ?: isSystemInDarkTheme()
     val view = LocalView.current
     if (!view.isInEditMode) SideEffect {          // status bar icons follow the theme, not the system

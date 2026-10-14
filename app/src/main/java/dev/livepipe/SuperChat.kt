@@ -56,6 +56,20 @@ object ChatBox {
         ChatLine("s5", "Neha", "lets goooo", 0),
     )
 
+    /** One message for the drifting style: bold white text with a dark outline, the name in its role colour. */
+    fun drift(l: ChatLine): Bitmap {
+        val name = l.name.take(24); val msg = "  " + l.text.take(70)
+        val p = TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { textSize = 44f; typeface = Typeface.DEFAULT_BOLD }
+        val nw = p.measureText(name)
+        val bmp = Bitmap.createBitmap((nw + p.measureText(msg) + 16).toInt().coerceAtLeast(1), 64, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        for ((txt, x, col) in listOf(Triple(name, 8f, roleColors[l.role.coerceIn(0, 3)]), Triple(msg, 8f + nw, 0xFFFFFFFF.toInt()))) {
+            p.style = android.graphics.Paint.Style.STROKE; p.strokeWidth = 7f; p.color = 0xCC000000.toInt(); c.drawText(txt, x, 48f, p)
+            p.style = android.graphics.Paint.Style.FILL; p.color = col; c.drawText(txt, x, 48f, p)
+        }
+        return bmp
+    }
+
     fun render(lines: List<ChatLine>): Bitmap {
         val bmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
@@ -242,7 +256,7 @@ class YouTubeChat(
  * app, so what the streamer picks is exactly what viewers get. No app name or branding on any style.
  */
 object SuperChatCard {
-    val STYLES = listOf("Ember", "Classic", "Minimal", "Neon")
+    val STYLES = listOf("Ember", "Classic", "Minimal", "Neon", "Gift envelope")
 
     // YouTube's Super Chat colours per tier: (deep, bright). Tier 1 is the lowest amount.
     private val TIERS = listOf(
@@ -264,7 +278,44 @@ object SuperChatCard {
         1 -> classic(e, showTotal)
         2 -> minimal(e)
         3 -> neon(e, showTotal)
+        4 -> envelope(e, showTotal)
         else -> ember(e, showTotal)
+    }
+
+    /* ---------- Gift envelope: unbleached paper, a gold rule, a red-and-white cord tied across it ---------- */
+    private fun envelope(e: SuperChat, showTotal: Boolean): Bitmap {
+        val w = 900; val pad = 34; val r = 42f
+        val ink = 0xFF23211F.toInt(); val gold = 0xFFB8924A.toInt(); val red = 0xFFC85554.toInt()
+        val serif = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+        val msg = text(e.message, paint(34f, 0xD923211F.toInt(), Typeface.SERIF), w - 2 * pad, 4)
+        val totalLine = e.total?.takeIf { showTotal }?.let { "Total this stream  ·  $it" }
+        val h = pad + 30 + (2 * r).toInt() + (msg?.let { 24 + it.height } ?: 0) + (totalLine?.let { 52 } ?: 0) + pad
+        return card(w, h) { c, box ->
+            val shape = Path().apply { addRoundRect(box, 18f, 18f, Path.Direction.CW) }
+            c.drawPath(shape, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFBFAF5.toInt(); setShadowLayer(30f, 0f, 10f, 0x66000000) })
+            c.drawPath(shape, Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 4f; color = gold })
+            val cy = box.top + 30f                                   // the cord: red, white, red, with a looped knot
+            for ((i, col) in listOf(red, 0xFFFFFFFF.toInt(), red).withIndex()) {
+                c.drawLine(box.left + 18, cy + (i - 1) * 7f, box.right - 18, cy + (i - 1) * 7f,
+                    Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 5f; color = col; strokeCap = Paint.Cap.ROUND })
+            }
+            val kx = box.right - pad - 60f
+            val knot = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 5f; color = red }
+            c.drawOval(kx - 36, cy - 22, kx, cy + 22, knot); c.drawOval(kx, cy - 22, kx + 36, cy + 22, knot)
+            val left = box.left + pad; val top = cy + 28
+            avatar(c, e, left + r, top + r, r, gold)
+            val tx = left + 2 * r + 24
+            val name = paint(38f, ink, serif)
+            c.drawText(ellipsize(e.name, name, box.right - pad - tx), tx, top + 38, name)
+            pill(c, e.amount, tx, top + 52, 44f, gold, Color.WHITE)
+            var y = top + 2 * r
+            msg?.let { y += 24; c.save(); c.translate(left, y); it.draw(c); c.restore(); y += it.height }
+            totalLine?.let {
+                y += 22
+                c.drawLine(left, y, box.right - pad, y, Paint().apply { color = 0x2623211F; strokeWidth = 2f })
+                c.drawText(it, left, y + 36, paint(26f, 0x9923211F.toInt(), Typeface.SERIF))
+            }
+        }
     }
 
     /* ---------- Ember: dark glass, tier-coloured glow and sheen, avatar ring, amount pill ---------- */

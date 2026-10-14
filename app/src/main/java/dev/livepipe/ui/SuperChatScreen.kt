@@ -160,6 +160,8 @@ fun SuperChatScreen(
         InsetCard {
             RowItem("Show live chat") { IosSwitch(prefs.showChat, { onPrefs(prefs.copy(showChat = it)); StreamService.refreshChat() }) }
             Hairline()
+            RowItem("Messages drift across the stream") { IosSwitch(prefs.chatDrift, { onPrefs(prefs.copy(chatDrift = it)); StreamService.refreshChat() }) }
+            Hairline()
             RowItem("Position & size") {
                 Text(if (dest != null) "Arrange" else "Add a channel first", color = if (dest != null) Accent else Ios.secondaryLabel,
                     modifier = Modifier.iosTap(dest != null) { onPlaceChat() })

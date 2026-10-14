@@ -472,7 +472,9 @@ fun StreamScreen(
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         // Brand header: the oni mark + name + a one-line mood.
         Row(Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-            AppLogo(prefs.logoUri, 52.dp, onClear = onResetLogo)
+            val stamp = LocalTheme.current.p.look.stamp
+            // Wa: the seal-red stamp stands in front of the name; your own logo still wins when you've set one.
+            if (stamp != null && prefs.logoUri.isBlank()) Stamp(stamp) else AppLogo(prefs.logoUri, 52.dp, onClear = onResetLogo)
             Spacer(Modifier.size(14.dp))
             Column {
                 ThemedTitle("Angra Streaming", 28.sp)
@@ -482,6 +484,9 @@ fun StreamScreen(
                     StreamService.State.ERROR -> "Couldn't connect. Check the URL and key."
                     else -> if (active == null) "Add a channel to get started" else "Ready when you are"
                 }, color = Ios.secondaryLabel, fontSize = 15.sp)
+                if (stamp != null) microSeason(java.time.LocalDate.now()).let { ko ->
+                    Text("${ko.english} · ${ko.sekki}", color = Ios.secondaryLabel, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
 

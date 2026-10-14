@@ -68,6 +68,9 @@ class StreamService : Service(), ConnectChecker {
     private var chatLayer: ImageFilterRender? = null
     private val chatLines = ArrayDeque<ChatLine>()
     private var showChat = false
+    private var chatDrift = false                // messages fly across the stream (niconico style)
+    private var driftLane = 0
+    private var drifting = 0
     private var alertLayer: ImageFilterRender? = null
     private val alertQueue = ArrayDeque<SuperChat>()
     private var alertBusy = false
@@ -138,7 +141,7 @@ class StreamService : Service(), ConnectChecker {
         applyVolumes(prefs)
         s.startStream(dest.endpoint())
         superChatStatus.value = ""
-        showChat = prefs.showChat
+        showChat = prefs.showChat; chatDrift = prefs.chatDrift
         if ((prefs.superChat || prefs.showChat) && prefs.ytApiKey.isNotBlank() && dest.ytSource.isNotBlank()) startChat(prefs, dest)
         live = this
         // OBS-style stream delay: buffers encoded output N seconds before sending. ponytail: cheap for
@@ -160,7 +163,7 @@ class StreamService : Service(), ConnectChecker {
         chat?.stop(); chat = null
         main.removeCallbacksAndMessages(null)
         alertQueue.clear(); alertBusy = false; alertLayer = null; superChatStatus.value = ""
-        chatLayer = null; chatLines.clear(); showChat = false
+        chatLayer = null; chatLines.clear(); showChat = false; drifting = 0
         facecam?.stop(); facecam = null
         // Detach first: stopStream() calls back onDisconnect(), which lands here again.
         val s = stream; val mp = projection
@@ -286,9 +289,32 @@ class StreamService : Service(), ConnectChecker {
     }
 
     private fun addChat(l: ChatLine) {
+        if (chatDrift) { if (showChat && !onBreak.value) driftChat(l); return }
         chatLines.addLast(l)
         while (chatLines.size > 8) chatLines.removeFirst()
         if (showChat) drawChat()
+    }
+
+    /**
+     * One message flies right to left across the stream on its own lane, then its layer is removed. ponytail: at
+     * most 8 in flight; a busier chat skips messages until a lane frees up.
+     */
+    private fun driftChat(l: ChatLine) {
+        val s = stream ?: return
+        if (drifting >= 8) return
+        val bmp = ChatBox.drift(l)
+        val h = 5.5f; val w = h * bmp.width / bmp.height / canvasAspect
+        val y = 6f + (driftLane++ % 8) * 7f
+        val f = ImageFilterRender().also { it.setImage(bmp); it.setScale(w, h); it.setPosition(100f, y); s.getGlInterface().addFilter(it) }
+        drifting++
+        android.animation.ValueAnimator.ofFloat(100f, -w).apply {
+            duration = 8000; interpolator = android.view.animation.LinearInterpolator()
+            addUpdateListener { f.setPosition(it.animatedValue as Float, y) }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) { drifting = (drifting - 1).coerceAtLeast(0); stream?.getGlInterface()?.removeFilter(f) }
+            })
+            start()
+        }
     }
 
     private fun drawChat() {
@@ -541,7 +567,7 @@ class StreamService : Service(), ConnectChecker {
         fun refreshChat() {
             live?.run {
                 val p = Store(this).prefsBundle
-                showChat = p.showChat
+                showChat = p.showChat; chatDrift = p.chatDrift
                 val d = sceneDest
                 if (chat == null && (p.superChat || p.showChat) && p.ytApiKey.isNotBlank() && d != null && d.ytSource.isNotBlank()) startChat(p, d)
                 if (chatLines.isNotEmpty()) drawChat()

@@ -18,6 +18,8 @@ SIL Open Font License each file is renamed to its resource name and does not use
 | theme_sharetech | Share Tech Mono | 2012 Carrois Type Design, Ralph du Carrois | OFL 1.1 |
 | theme_baskerville | Libre Baskerville Italic | 2012 The Libre Baskerville Project Authors | OFL 1.1 |
 | theme_jost | Jost | 2020 The Jost Project Authors | OFL 1.1 |
+| theme_shippori | Shippori Mincho (Bold) | 2021 The Shippori Mincho Project Authors | OFL 1.1 |
+| theme_zenmaru | Zen Maru Gothic (Medium) | 2021 The Zen Maru Gothic Authors | OFL 1.1 |
 | theme_syncopate | Syncopate | 2010 Brian J. Bonislawsky DBA Astigmatic (AOETI) | Apache 2.0 |
 
 `theme_grid` (Gridline, the Tron face) is original to this app, built by `tools/grid_font.py`, MIT.

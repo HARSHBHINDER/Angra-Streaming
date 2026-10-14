@@ -118,6 +118,7 @@ data class Prefs(
     val bubbleY: Float = 0.3f,
     val superChat: Boolean = false,              // show YouTube Super Chats on stream
     val showChat: Boolean = false,               // show ordinary live chat messages in a box on stream
+    val chatDrift: Boolean = false,              // chat flies across the stream instead of sitting in the box
     val ytApiKey: String = "",                   // the streamer's own YouTube Data API key (encrypted store)
     val alertStyle: Int = 0,                     // SuperChatCard.STYLES index
     val alertSeconds: Int = 8,
@@ -126,7 +127,7 @@ data class Prefs(
     val bubbleSlots: String = BubbleAction.DEFAULT_IDS,   // the 5 bubble controls, comma-joined action ids
     val bubbleSecure: Boolean = true,            // FLAG_SECURE on the bubble so capture doesn't show its content
     val bubbleEdgeHide: Boolean = true,          // tuck into a slim edge handle when idle; tap the handle to pop out
-    val theme: String = "original",              // ui.Palettes id
+    val theme: String = "wa",                    // ui.Palettes id
     val liveTheme: Boolean = false,              // Live theme: scenes move (~10 fps, paused off-screen); off = a still frame
     val logoUri: String = "",                    // the user's own app logo (copy in app storage); empty = Angra oni
     val charging: Int = Charging.FAST,           // Charging mode; Fast = the phone's own stock charging
@@ -184,11 +185,11 @@ class Store(context: Context) {
                 bubbleEdgeHide = o.optBoolean("beh", true),
                 logoUri = o.optString("logo", ""),
                 breakImageUri = o.optString("brk", ""),
-                superChat = o.optBoolean("sc", false), showChat = o.optBoolean("chat", false), ytApiKey = o.optString("ytk", ""),
+                superChat = o.optBoolean("sc", false), showChat = o.optBoolean("chat", false), chatDrift = o.optBoolean("chd", false), ytApiKey = o.optString("ytk", ""),
                 alertStyle = o.optInt("ast", 0), alertSeconds = o.optInt("asec", 8), alertShowTotal = o.optBoolean("atot", true),
                 bubbleSlots = o.optString("bsl", BubbleAction.DEFAULT_IDS),
                 bubbleSecure = o.optBoolean("bsec", true),
-                theme = o.optString("th", "original"), liveTheme = o.optBoolean("lt", false),
+                theme = o.optString("th", "wa"), liveTheme = o.optBoolean("lt", false),
                 charging = o.optInt("chg", Charging.FAST),
             )
         }
@@ -200,7 +201,7 @@ class Store(context: Context) {
                 put("mic", p.micDeviceId); put("mv", p.micVolume.toDouble()); put("gv", p.gameVolume.toDouble())
                 put("bx", p.bubbleX.toDouble()); put("by", p.bubbleY.toDouble()); put("beh", p.bubbleEdgeHide); put("logo", p.logoUri); put("brk", p.breakImageUri)
                 put("bsl", p.bubbleSlots); put("bsec", p.bubbleSecure)
-                put("sc", p.superChat); put("chat", p.showChat); put("ytk", p.ytApiKey); put("ast", p.alertStyle); put("asec", p.alertSeconds)
+                put("sc", p.superChat); put("chat", p.showChat); put("chd", p.chatDrift); put("ytk", p.ytApiKey); put("ast", p.alertStyle); put("asec", p.alertSeconds)
                 put("atot", p.alertShowTotal); put("th", p.theme); put("lt", p.liveTheme); put("chg", p.charging)
             }
             prefs.edit().putString("prefs", o.toString()).apply()

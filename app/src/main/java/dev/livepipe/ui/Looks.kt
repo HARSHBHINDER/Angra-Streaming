@@ -103,7 +103,7 @@ import kotlin.math.sqrt
  * doesn't move never redraw at all.
  */
 
-enum class Scene { MATTE, WHITE, EMBER, TRON, CYBER, WASHI, NIGHT, OUTRUN, AURORA, GLASS, OCEAN, SAKURA, RAIN, VAPOR, SNOW, DUNES }
+enum class Scene { WA, MATTE, WHITE, EMBER, TRON, CYBER, WASHI, NIGHT, OUTRUN, AURORA, GLASS, OCEAN, SAKURA, RAIN, VAPOR, SNOW, DUNES }
 enum class Edge { NONE, HAIRLINE, PULSE, GLITCH, BRUSH, BLADE, NEON, CHROMA, SPECULAR }
 enum class Fill { SOLID, GLASS, PAPER }
 enum class Corner { ROUND, CUT, BLADE }
@@ -130,6 +130,7 @@ class Look(
     val floatingBar: Boolean = false,        // iOS 26 floating glass tab bar that bends the content under it
     val frost: Dp = 26.dp,                   // glass blur; Liquid Glass is the clear variant (little diffusion)
     val titleScale: Float = 1f,              // wide display faces are set smaller so titles fit
+    val stamp: String? = null,               // Wa: a seal-red hanko stamp in front of the app name
 )
 
 /* ---------------- shared scene host ---------------- */
@@ -1223,6 +1224,7 @@ private fun DrawScope.drawSceneStill(p: Palette, full: Size, dark: Boolean) {
     val W = full.width; val H = full.height
     if (W <= 0f || H <= 0f) return
     when (p.look.scene) {
+        Scene.WA -> waStill(W, H, dark)
         Scene.MATTE -> matte(W, H)
         Scene.WHITE -> white(W, H)
         Scene.EMBER -> emberStill(W, H, dark)
@@ -1255,6 +1257,7 @@ private fun DrawScope.drawSceneMoving(p: Palette, full: Size, t: Float, dark: Bo
         Scene.AURORA -> shader(Gpu.aurora, W, H, t)
         Scene.GLASS -> shader(Gpu.glass, W, H, t)
         Scene.OCEAN -> shader(Gpu.ocean, W, H, t)
+        Scene.WA -> waMoving(W, H, t, dark)
         Scene.SAKURA -> sakuraMoving(W, H, t)
         Scene.RAIN -> shader(Gpu.matrix, W, H, t)
         Scene.VAPOR -> vaporMoving(W, H, t)
@@ -1268,6 +1271,35 @@ private fun DrawScope.full(W: Float, H: Float, brush: Brush, alpha: Float = 1f, 
     drawRect(brush, Offset.Zero, Size(W, H), alpha, blendMode = blend)
 private fun DrawScope.full(W: Float, H: Float, color: Color) = drawRect(color, Offset.Zero, Size(W, H))
 private fun v(vararg stops: Pair<Float, Color>, H: Float) = Brush.verticalGradient(*stops, startY = 0f, endY = H)
+
+/** The Wa season's colour: sakura in spring, young bamboo in summer, maple in autumn, snow-blue in winter. */
+private fun waTint(season: Int) = when (season) { 0 -> Color(0xFFF4A7B9); 1 -> Color(0xFF4F9E75); 2 -> Color(0xFFC8553D); else -> Color(0xFF8FA6B8) }
+
+/** Wa: unbleached paper (kinari) by day, sumi ink by night, washi fibres, an indigo wash from above and the season's colour below. */
+private fun DrawScope.waStill(W: Float, H: Float, dark: Boolean) {
+    full(W, H, if (dark) Color(0xFF161513) else Color(0xFFFBFAF5))
+    full(W, H, Textures.brush(Textures.paper), if (dark) 0.05f else 0.55f)
+    full(W, H, Brush.radialGradient(listOf(Color(0xFF165E83).copy(alpha = if (dark) 0.22f else 0.10f), Color.Transparent), Offset(W * 0.85f, -H * 0.05f), W * 0.95f))
+    full(W, H, Brush.radialGradient(listOf(waTint(seasonOf(java.time.LocalDate.now())).copy(alpha = if (dark) 0.12f else 0.10f), Color.Transparent),
+        Offset(W * 0.1f, H * 1.02f), W * 0.9f))
+}
+
+/** Wa with Live theme on: the season drifts past — petals in spring, fireflies in summer, maple leaves in autumn, snow in winter. */
+private fun DrawScope.waMoving(W: Float, H: Float, t: Float, dark: Boolean) {
+    val season = seasonOf(java.time.LocalDate.now())
+    when (season) {
+        0 -> sakuraMoving(W, H, t, waTint(0), count = 12)
+        2 -> sakuraMoving(W, H, t, waTint(2), count = 10)
+        3 -> snowMoving(W, H, t, if (dark) Color(0xFFECEFF4) else Color(0xFF9FB3C2), count = 30)
+        else -> for (i in 0 until 14) {                     // fireflies: slow wander, soft pulse
+            val x = (hash(i) + 0.08f * sin(t * 0.3f + i)) * W
+            val y = H * (0.45f + 0.5f * hash(i + 5)) + sin(t * 0.4f + i * 1.7f) * 18.dp.toPx()
+            val glow = 0.35f + 0.65f * abs(sin(t * 0.9f + i))
+            drawCircle(Color(0xFFD9F27A).copy(alpha = 0.18f * glow), 7.dp.toPx(), Offset(x, y))
+            drawCircle(Color(0xFFEFFFB0).copy(alpha = 0.9f * glow), 1.6.dp.toPx(), Offset(x, y))
+        }
+    }
+}
 
 /** Matte black: anodised, light-absorbing, a breath of grain and a vignette. No glow at all. */
 private fun DrawScope.matte(W: Float, H: Float) {
@@ -1404,13 +1436,13 @@ private fun DrawScope.sakuraStill(W: Float, H: Float) {
         drawCircle(Color(0xFFE0457B), s * 0.22f, c)
     }
 }
-private fun DrawScope.sakuraMoving(W: Float, H: Float, t: Float) {
-    for (i in 0 until 26) {
+private fun DrawScope.sakuraMoving(W: Float, H: Float, t: Float, color: Color = Color(0xFFFFB7C9), count: Int = 26) {
+    for (i in 0 until count) {
         val x = frac(hash(i) + t * 0.015f * (0.5f + hash(i + 3))) * (W + 40f) - 20f + sin(t * 0.8f + i) * 30f
         val y = frac(hash(i + 9) + t * 0.02f * (0.6f + hash(i + 5))) * (H + 40f) - 20f
         val s = (5 + hash(i + 2) * 5).dp.toPx(); val flip = 0.35f + 0.65f * abs(sin(t * 2f + i))
         withTransform({ translate(x, y); rotate(t * 60f * (hash(i + 4) - 0.5f) + i * 40f, Offset.Zero); scale(s * 0.6f, s * flip, Offset.Zero) }) {
-            drawPath(petal, Color(0xFFFFB7C9), alpha = 0.85f)
+            drawPath(petal, color, alpha = 0.85f)
         }
     }
 }
@@ -1473,11 +1505,11 @@ private fun DrawScope.snowStill(W: Float, H: Float) {
         drawRect(tone, Offset(0f, H * (0.9f + L * 0.06f)), Size(W, H))
     }
 }
-private fun DrawScope.snowMoving(W: Float, H: Float, t: Float) {
-    for (i in 0 until 60) {
+private fun DrawScope.snowMoving(W: Float, H: Float, t: Float, color: Color = Color(0xFFECEFF4), count: Int = 60) {
+    for (i in 0 until count) {
         val y = frac(hash(i) + t * (0.02f + hash(i + 7) * 0.025f)) * H
         val x = hash(i + 1) * W + sin(t * 0.6f + i) * 12.dp.toPx()
-        drawCircle(Color(0xFFECEFF4).copy(alpha = 0.45f + hash(i + 2) * 0.45f), (1f + hash(i + 3) * 1.6f).dp.toPx(), Offset(x, y))
+        drawCircle(color.copy(alpha = 0.45f + hash(i + 2) * 0.45f), (1f + hash(i + 3) * 1.6f).dp.toPx(), Offset(x, y))
     }
 }
 
@@ -1528,6 +1560,14 @@ fun ThemedTitle(text: String, fontSize: TextUnit, modifier: Modifier = Modifier)
         autoSize = TextAutoSize.StepBased(minFontSize = size * 0.45f, maxFontSize = size, stepSize = 0.5.sp),
     )
 }
+
+/** Hanko: a square seal-red stamp, slightly askew as if pressed by hand; the Wa theme sets it before the app name. */
+@Composable
+fun Stamp(text: String, size: Dp = 50.dp) = Box(
+    Modifier.size(size).graphicsLayer { rotationZ = -4f }.background(Color(0xFFC85554), RoundedCornerShape(size / 5))
+        .border(1.5.dp, Color.White.copy(alpha = 0.28f), RoundedCornerShape(size / 5)),
+    contentAlignment = Alignment.Center,
+) { Text(text, color = Color.White, fontSize = (size.value * 0.5f).sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold) }
 
 /** Hanko: the vermilion (or crimson) seal a ninja theme stamps beside its titles. 忍 = shinobi. */
 @Composable
